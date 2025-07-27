@@ -1,6 +1,6 @@
 App({
   globalData: {
-    wsBaseUrl: "wss://mego-xr.com",
+    wsBaseUrl: "wss://mego-xr.com/ws",
     messagesLoaded: false
   },
   onLaunch: function () {

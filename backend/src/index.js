@@ -22,7 +22,11 @@ const server = app.listen(port, () => {
   console.log(`服务器运行在端口 ${port}`);
 });
 
-const wss = new WebSocketServer({ server });
+// 创建WebSocket服务器，支持/ws路径
+const wss = new WebSocketServer({ 
+  server,
+  path: '/ws'
+});
 
 // 处理 WebSocket 连接
 wss.on('connection', async (ws, req) => {

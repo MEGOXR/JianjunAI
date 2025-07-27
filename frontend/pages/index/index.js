@@ -88,6 +88,8 @@ Page({
     if (this.data.socketTask) return;
   
     const wsUrl = `${getApp().globalData.wsBaseUrl}`;
+    console.log('尝试连接WebSocket:', wsUrl);
+    
     const socketTask = wx.connectSocket({
       url: wsUrl,
       header: { 
