@@ -16,21 +16,35 @@ Page({
 
   onLoad: function() {
     // Get user ID from storage or generate new one
-    const userId = wx.getStorageSync('userId');
-    this.setData({ 
-      userId: userId || `user_${Date.now()}`
-    });
+    let userId = wx.getStorageSync('userId');
+    if (!userId) {
+      userId = `user_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      wx.setStorageSync('userId', userId);
+    }
+    
+    this.setData({ userId });
+    
+    // 获取微信用户信息
+    this.getUserInfo();
     
     // Setup WebSocket connection
     this.setupWebSocket();
-
-    // Load messages from storage
-    const messages = wx.getStorageSync('messages') || [];
-    this.setData({ 
-      messages: this.formatMessages(messages),
-      lastMsgId: messages.length > 0 ? `msg-${messages.length - 1}` : '' 
-    }, () => {
-      this.scrollToBottom();
+  },
+  
+  getUserInfo: function() {
+    // 尝试获取用户信息
+    wx.getUserProfile({
+      desc: '用于个性化问候',
+      success: (res) => {
+        this.setData({
+          wxNickname: res.userInfo.nickName,
+          wxAvatarUrl: res.userInfo.avatarUrl
+        });
+      },
+      fail: () => {
+        // 用户拒绝授权，使用默认名称
+        console.log('用户拒绝授权获取用户信息');
+      }
     });
   },
 
@@ -73,18 +87,34 @@ Page({
   setupWebSocket: function () {
     if (this.data.socketTask) return;
   
-    const wsUrl = `${getApp().globalData.wsBaseUrl}/api`;
+    const wsUrl = `${getApp().globalData.wsBaseUrl}`;
     const socketTask = wx.connectSocket({
       url: wsUrl,
-      header: { "User-Id": this.data.userId },
+      header: { 
+        "User-Id": this.data.userId,
+        "Wx-Nickname": encodeURIComponent(this.data.wxNickname || '')
+      },
     });
   
     let reconnectCount = 0; // 重连计数
+    let reconnectTimer = null;
   
     const reconnect = () => {
       if (reconnectCount < 5) { // 最多重连5次
         reconnectCount++;
-        setTimeout(() => this.setupWebSocket(), 3000);
+        
+        // 使用指数退避算法
+        const delay = Math.min(1000 * Math.pow(2, reconnectCount - 1), 30000);
+        console.log(`WebSocket将在${delay}ms后重连，第${reconnectCount}次重连`);
+        
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer);
+        }
+        
+        reconnectTimer = setTimeout(() => {
+          console.log(`开始第${reconnectCount}次重连`);
+          this.setupWebSocket();
+        }, delay);
       } else {
         wx.showToast({ title: "连接失败，请稍后再试", icon: "none" });
       }
@@ -94,11 +124,43 @@ Page({
       this.setData({ socketTask });
       console.log("WebSocket 连接成功");
       reconnectCount = 0; // 重置重连计数
+      
+      // 清除重连定时器
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      
+      // 发送初始化消息
+      socketTask.send({
+        data: JSON.stringify({
+          type: 'init',
+          wxNickname: this.data.wxNickname || ''
+        })
+      });
     });
   
     socketTask.onMessage((res) => {
       const data = JSON.parse(res.data);
       let newMessages = [...this.data.messages];
+    
+      // 处理问候消息
+      if (data.type === 'greeting') {
+        const greetingMessage = {
+          role: 'assistant',
+          content: data.data,
+          timestamp: Date.now(),
+          isGreeting: true
+        };
+        newMessages.unshift(greetingMessage);
+        this.setData({
+          messages: this.formatMessages(newMessages),
+          userId: data.userId || this.data.userId
+        }, () => {
+          this.scrollToBottom();
+        });
+        return;
+      }
     
       if (data.data) {
         if (newMessages.length === 0 || newMessages[newMessages.length - 1].role !== 'assistant') {
@@ -175,7 +237,10 @@ Page({
     this.setData({ isConnecting: true });
   
     this.data.socketTask.send({
-      data: JSON.stringify({ prompt: this.data.userInput }),
+      data: JSON.stringify({ 
+        prompt: this.data.userInput,
+        wxNickname: this.data.wxNickname || ''
+      }),
       success: () => {
         const newMessages = [...this.data.messages, {
           role: 'user',
@@ -411,7 +476,10 @@ Page({
     // Send to websocket
     if (this.data.socketTask) {
       this.data.socketTask.send({
-        data: JSON.stringify({ prompt: text })
+        data: JSON.stringify({ 
+          prompt: text,
+          wxNickname: this.data.wxNickname || ''
+        })
       });
     }
   },
