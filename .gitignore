@@ -1,0 +1,43 @@
+# Node modules
+node_modules/
+*/node_modules/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+dist/
+build/
+*.tmp
+
+# WeChat Mini Program
+frontend/project.private.config.json
+frontend/miniprogram_npm/
+
+# Backend specific
+backend/uploads/
+backend/temp/
+
+# Testing
+coverage/
+.nyc_output/

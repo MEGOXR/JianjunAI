@@ -1,0 +1,78 @@
+<view class="container">
+  <scroll-view 
+    scroll-y 
+    class="chat-history" 
+    scroll-with-animation
+    scroll-into-view="{{lastMsgId}}"
+    scroll-top="{{scrollTop}}"
+    enhanced="{{true}}"
+    show-scrollbar="{{false}}"
+    bounces="{{false}}"
+    bindscroll="onScroll"
+  >
+    <block wx:for="{{messages}}" wx:key="index">
+      <!-- 日期和时间显示 -->
+      <view wx:if="{{item.formattedDate}}" class="date-label">{{item.formattedDate}}</view>
+      
+      <!-- 用户消息 -->
+      <view class="message-item" id="msg-{{index}}" wx:if="{{item.role === 'user'}}">
+        <view class="user-message">
+          <text user-select="true">{{item.content}}</text>
+        </view>
+      </view>
+
+      <!-- AI 消息 -->
+      <view class="message-item" id="msg-{{index}}" wx:if="{{item.role === 'assistant'}}">
+        <view class="ai-message">
+          <block wx:if="{{item.segments}}">
+            <text wx:for="{{item.segments}}" wx:key="index" wx:for-item="segment" user-select="true">
+              <text wx:if="{{segment.type === 'text'}}">{{segment.content}}</text>
+              <text wx:else class="phone-number" bindtap="handleLinkTap" data-phone="{{segment.number}}">{{segment.content}}</text>
+            </text>
+          </block>
+          <text wx:else user-select="true">{{item.content}}</text>
+        </view>
+      </view>
+    </block>
+  </scroll-view>
+
+  <!-- 输入区域 -->
+  <view class="input-area">
+    <view class="input-container">
+      <view class="input-wrapper">
+        <textarea
+          class="input-box"
+          placeholder=""
+          bindinput="bindInput"
+          bindconfirm="sendMessage"
+          bindfocus="handleFocus"
+          value="{{userInput}}"
+          maxlength="500"
+          fixed="{{true}}"
+          show-confirm-bar="{{false}}"
+          cursor-spacing="20"
+          confirm-type="send"
+        ></textarea>
+        <!-- 自定义 placeholder，当没有输入内容时显示 -->
+        <view wx:if="{{!userInput}}" class="custom-placeholder">请输入您的问题</view>
+      </view>
+      <!-- <image 
+        wx:if="{{!userInput}}"
+        class="mode-switch-btn"
+        src="/images/voice.png"
+        bindtap="switchToVoice"
+      /> -->
+      <image 
+        wx:if="{{userInput}}"
+        class="send-btn"
+        src="/images/send.png"
+        bindtap="sendMessage"
+      />
+    </view>
+  </view>
+
+  <!-- 当用户滚动时显示的"回到底部"按钮 -->
+  <view class="scroll-to-bottom" bindtap="scrollToBottom" wx:if="{{showScrollToBottom}}">
+    <image src="/images/arrow-down.png" class="arrow-down-icon"></image>
+  </view>
+</view>

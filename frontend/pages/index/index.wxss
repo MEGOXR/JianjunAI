@@ -1,0 +1,249 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw; 
+  background-color: #f5f5f5;
+  position: relative;
+  overflow-x: hidden;
+}
+
+.chat-history {
+  flex: 1;
+  padding: 10rpx 20rpx 200rpx;  /* Increase bottom padding */
+  overflow-y: auto;
+  margin-bottom: 0;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  background-color: #f5f5f5;
+}
+
+.timestamp {
+  text-align: center;
+  padding: 20rpx 0;
+  color: #999;
+  font-size: 24rpx;
+}
+
+/* 每条消息 */
+.message-item {
+  margin: 20rpx 0;  /* 调整消息项之间的整体间距 */
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  animation: fadeIn 0.3s ease-in-out forwards;
+  will-change: transform;
+}
+
+@keyframes fadeIn {
+  to {
+    opacity: 1;
+  }
+}
+.user-message {
+  align-self: flex-end;
+  background-color: #007AFF;
+  color: white;
+  padding: 24rpx 32rpx;
+  border-radius: 24rpx 24rpx 0 24rpx;
+  max-width: 80%;
+  word-wrap: break-word;
+  margin-right: 12rpx; /* 统一右侧边距 */
+}
+
+.ai-message {
+  align-self: flex-start;
+  background-color: white;
+  color: #333;
+  padding: 24rpx 32rpx;
+  border-radius: 24rpx 24rpx 24rpx 0;
+  max-width: 80%;
+  word-wrap: break-word;
+  box-shadow: 0 2rpx 4rpx rgba(0,0,0,0.1);
+  margin-left: 12rpx; /* 统一左侧边距 */
+}
+
+.input-area {
+  position: fixed;
+  bottom: 60rpx;
+  left: 20rpx;
+  right: 20rpx;
+  background-color: white;
+  padding: 20rpx;
+  border-radius: 24rpx;
+  box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.1);
+  z-index: 100;
+}
+
+.input-container {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  height: 72rpx;
+}
+
+/* 注释掉语音相关样式
+.voice-container {
+  display: flex;
+  position: relative;
+  justify-content: center;
+  align-items: center;
+  background-color: white;
+  width: 100%;
+  height: 72rpx;
+}
+*/
+
+.input-length {
+  font-size: 24rpx;
+  color: #999;
+  text-align: right;
+  margin-top: 8rpx;
+}
+
+/* 包裹 textarea 和自定义 placeholder 的容器 */
+.input-wrapper {
+  position: relative;
+  flex: 1;
+}
+
+/* textarea 样式 */
+.input-box {
+  width: 100%;
+  height: 40rpx;      /* 固定高度 */
+  padding: 0;    /* 与原设计保持一致 */
+  font-size: 28rpx;
+  line-height: 40rpx;  /* 使文本垂直居中 */
+  border: none;       /* 如有边框可根据需要添加 */
+  border-radius: 36rpx;
+  background-color: white;
+  box-sizing: border-box;
+  text-indent: 20rpx;
+}
+
+/* 自定义 placeholder 层 */
+.custom-placeholder {
+  position: absolute;
+  left: 20rpx;         /* 与 textarea 的左右内边距一致 */
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 28rpx;
+  color: #ccc;         /* 根据需求调整 placeholder 颜色 */
+  pointer-events: none; /* 点击时让事件穿透到 textarea */
+}
+
+
+.input-box:focus {
+  background-color: #f0f0f0;
+}
+
+.voice-btn {
+  width: 100%; /* Take full width */
+  height: 72rpx;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: white;
+  border: none;
+  font-size: 32rpx;
+  color: #333;
+  margin: 0;
+  padding: 0;
+}
+
+.voice-container .mode-switch-btn {
+  position: absolute; /* Position absolutely within voice container */
+  right: 20rpx; /* Align to right with margin */
+  top: 50%;
+  transform: translateY(-50%); /* Center vertically */
+  width: 56rpx;
+  height: 56rpx;
+  padding: 10rpx;
+  z-index: 2; /* Ensure it's above the voice button */
+}
+
+.voice-btn:active {
+  background-color: #f0f0f0;
+}
+
+.mode-switch-btn {
+  width: 56rpx;
+  height: 56rpx;
+  padding: 20rpx;
+  transition: opacity 0.3s ease;
+}
+
+.send-btn {
+  width: 56rpx;
+  height: 56rpx;
+  padding: 10rpx;
+  color: #007AFF;
+  transition: opacity 0.3s ease;
+}
+
+.send-btn:active {
+  opacity: 0.6;
+}
+
+.date-label {
+  text-align: center;
+  color: #888;
+  margin-top: 20rpx;    /* 时间戳上方间距 */
+  margin-bottom: 20rpx; /* 时间戳下方间距，增加与消息间距 */
+  font-size: 24rpx;
+}
+
+.time-label {
+  display: block;
+  text-align: right;
+  color: #888;
+  font-size: 12px;
+  margin-top: 5px;
+}
+
+/* 添加文本选择相关样式 */
+.user-message text,
+.ai-message text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ai-message rich-text {
+  display: inline-block;
+  width: 100%;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.phone-number {
+  color: #007AFF;
+  text-decoration: underline;
+}
+
+/* 回到底部按钮样式 */
+.scroll-to-bottom {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 220rpx; /* 位于输入框正上方 */
+  width: 70rpx;
+  height: 70rpx;
+  background-color: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  box-shadow: 0 2rpx 12rpx rgba(0, 0, 0, 0.15);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 100;
+  transition: all 0.3s ease;
+}
+
+.scroll-to-bottom:active {
+  transform: translateX(-50%) scale(0.95);
+  background-color: rgba(245, 245, 245, 0.9);
+}
+
+.arrow-down-icon {
+  width: 60rpx; /* 图标尺寸适中，与圆形底色协调 */
+  height: 60rpx;
+}
