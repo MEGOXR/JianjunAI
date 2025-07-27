@@ -20,13 +20,30 @@ app.get('/health', (req, res) => {
 // 创建 WebSocket 服务器
 const server = app.listen(port, () => {
   console.log(`服务器运行在端口 ${port}`);
+  console.log(`环境变量检查:`);
+  console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
+  console.log(`- PORT: ${process.env.PORT}`);
+  console.log(`- Azure OpenAI Endpoint: ${process.env.AZURE_OPENAI_ENDPOINT ? '已设置' : '未设置'}`);
 });
 
+console.log('正在创建WebSocket服务器...');
 const wss = new WebSocketServer({ server });
+console.log('WebSocket服务器创建完成，等待连接...');
+
+// WebSocket测试端点
+app.get('/ws-test', (req, res) => {
+  res.status(200).json({ 
+    message: 'WebSocket服务器运行中',
+    wsConnections: wss.clients.size,
+    timestamp: new Date().toISOString()
+  });
+});
 
 // 处理 WebSocket 连接
 wss.on('connection', async (ws, req) => {
   console.log('WebSocket 连接已建立');
+  console.log('请求URL:', req.url);
+  console.log('请求头:', JSON.stringify(req.headers, null, 2));
   
   // 从请求头获取用户信息
   const userId = req.headers['user-id'];
