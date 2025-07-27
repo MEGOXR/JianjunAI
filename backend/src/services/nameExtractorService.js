@@ -6,7 +6,9 @@ class NameExtractorService {
     this.apiKey = process.env.AZURE_OPENAI_API_KEY;
     this.apiVersion = process.env.OPENAI_API_VERSION;
     this.deployment = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
-    
+  }
+  
+  validateConfig() {
     if (!this.endpoint || !this.apiKey || !this.apiVersion || !this.deployment) {
       console.error('Azure OpenAI configuration missing for NameExtractorService');
       throw new Error('Azure OpenAI credentials not configured');
@@ -15,6 +17,9 @@ class NameExtractorService {
 
   async extractNameFromConversation(messages) {
     try {
+      // 验证配置
+      this.validateConfig();
+      
       // 创建 Azure OpenAI 客户端
       const client = new AzureOpenAI({
         apiKey: this.apiKey,

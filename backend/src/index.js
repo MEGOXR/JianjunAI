@@ -6,7 +6,7 @@ const chatController = require('./controllers/chatController'); // 导入 WebSoc
 const SecurityMiddleware = require('./middleware/security');
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8080;
 
 // 中间件配置
 app.use(cors());
@@ -14,7 +14,25 @@ app.use(express.json());
 
 // 健康检查
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK' });
+  res.status(200).json({ 
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    port: port
+  });
+});
+
+// 配置检查端点
+app.get('/config-check', (req, res) => {
+  const config = {
+    azureEndpoint: process.env.AZURE_OPENAI_ENDPOINT ? '已设置' : '未设置',
+    azureApiKey: process.env.AZURE_OPENAI_API_KEY ? '已设置' : '未设置',
+    azureApiVersion: process.env.OPENAI_API_VERSION ? '已设置' : '未设置',
+    azureDeployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME ? '已设置' : '未设置',
+    nodeEnv: process.env.NODE_ENV || '未设置',
+    port: port
+  };
+  
+  res.status(200).json(config);
 });
 
 // 创建 WebSocket 服务器

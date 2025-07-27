@@ -9,10 +9,16 @@ const apiKey = process.env.AZURE_OPENAI_API_KEY;
 const apiVersion = process.env.OPENAI_API_VERSION;
 const deployment = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
 
-// 验证必要的配置
-if (!endpoint || !apiKey || !apiVersion || !deployment) {
-  console.error('Azure OpenAI configuration missing. Please check environment variables.');
-  throw new Error('Azure OpenAI credentials not configured');
+// 验证配置的函数（延迟到实际使用时检查）
+function validateAzureConfig() {
+  if (!endpoint || !apiKey || !apiVersion || !deployment) {
+    console.error('Azure OpenAI configuration missing. Please check environment variables.');
+    console.error(`Endpoint: ${endpoint ? '已设置' : '未设置'}`);
+    console.error(`API Key: ${apiKey ? '已设置' : '未设置'}`);
+    console.error(`API Version: ${apiVersion ? '已设置' : '未设置'}`);
+    console.error(`Deployment: ${deployment ? '已设置' : '未设置'}`);
+    throw new Error('Azure OpenAI credentials not configured');
+  }
 }
 
 // 使用 userId 作为 key 来存储对话历史
@@ -67,6 +73,9 @@ const getUserId = (ws) => {
 
 exports.sendMessage = async (ws, prompt, wxNickname) => {
   try {
+    // 验证Azure配置
+    validateAzureConfig();
+    
     const userId = getUserId(ws);
     
     // 获取用户数据
