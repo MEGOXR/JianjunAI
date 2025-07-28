@@ -8,9 +8,30 @@ const SecurityMiddleware = require('./middleware/security');
 const app = express();
 const port = process.env.PORT || 8080;
 
+// 启动时输出详细的环境配置信息
+console.log('=== 应用启动配置信息 ===');
+console.log(`- 当前时间: ${new Date().toISOString()}`);
+console.log(`- Node.js 版本: ${process.version}`);
+console.log(`- 工作目录: ${process.cwd()}`);
+console.log(`- 环境: ${process.env.NODE_ENV || 'development'}`);
+console.log(`- 端口: ${port}`);
+console.log(`- 原始 PORT 环境变量: ${JSON.stringify(process.env.PORT)}`);
+console.log('=== Azure OpenAI 配置 ===');
+console.log(`- AZURE_OPENAI_ENDPOINT: ${process.env.AZURE_OPENAI_ENDPOINT ? '已设置' : '未设置'}`);
+console.log(`- AZURE_OPENAI_API_KEY: ${process.env.AZURE_OPENAI_API_KEY ? '已设置 (长度: ' + process.env.AZURE_OPENAI_API_KEY.length + ')' : '未设置'}`);
+console.log(`- OPENAI_API_VERSION: ${process.env.OPENAI_API_VERSION || '未设置'}`);
+console.log(`- AZURE_OPENAI_DEPLOYMENT_NAME: ${process.env.AZURE_OPENAI_DEPLOYMENT_NAME || '未设置'}`);
+console.log('=== 其他环境变量 ===');
+console.log(`- WEBSITE_HOSTNAME: ${process.env.WEBSITE_HOSTNAME || '未设置'}`);
+console.log(`- WEBSITE_SITE_NAME: ${process.env.WEBSITE_SITE_NAME || '未设置'}`);
+console.log('========================');
+
 // 中间件配置
 app.use(cors());
 app.use(express.json());
+
+// 静态文件服务 - 用于诊断页面
+app.use('/public', express.static('public'));
 
 // 健康检查
 app.get('/health', (req, res) => {
@@ -24,12 +45,32 @@ app.get('/health', (req, res) => {
 // 配置检查端点
 app.get('/config-check', (req, res) => {
   const config = {
-    azureEndpoint: process.env.AZURE_OPENAI_ENDPOINT ? '已设置' : '未设置',
-    azureApiKey: process.env.AZURE_OPENAI_API_KEY ? '已设置' : '未设置',
-    azureApiVersion: process.env.OPENAI_API_VERSION ? '已设置' : '未设置',
-    azureDeployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME ? '已设置' : '未设置',
-    nodeEnv: process.env.NODE_ENV || '未设置',
-    port: port
+    timestamp: new Date().toISOString(),
+    server: {
+      port: port,
+      originalPortEnv: process.env.PORT,
+      nodeVersion: process.version,
+      platform: process.platform,
+      workingDirectory: process.cwd()
+    },
+    azure: {
+      endpoint: process.env.AZURE_OPENAI_ENDPOINT ? {
+        status: '已设置',
+        value: process.env.AZURE_OPENAI_ENDPOINT
+      } : '未设置',
+      apiKey: process.env.AZURE_OPENAI_API_KEY ? {
+        status: '已设置',
+        length: process.env.AZURE_OPENAI_API_KEY.length,
+        preview: process.env.AZURE_OPENAI_API_KEY.substring(0, 8) + '...'
+      } : '未设置',
+      apiVersion: process.env.OPENAI_API_VERSION || '未设置',
+      deployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME || '未设置'
+    },
+    environment: {
+      nodeEnv: process.env.NODE_ENV || '未设置',
+      websiteHostname: process.env.WEBSITE_HOSTNAME || '未设置',
+      websiteSiteName: process.env.WEBSITE_SITE_NAME || '未设置'
+    }
   };
   
   res.status(200).json(config);
