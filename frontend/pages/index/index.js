@@ -22,28 +22,88 @@ Page({
       wx.setStorageSync('userId', userId);
     }
     
-    this.setData({ userId });
+    // 恢复聊天记录
+    const savedMessages = wx.getStorageSync('messages') || [];
     
-    // 获取微信用户信息
-    this.getUserInfo();
+    this.setData({ 
+      userId,
+      messages: this.formatMessages(savedMessages)
+    });
+    
+    // 检查是否已有用户信息，没有则尝试获取
+    this.checkAndGetUserInfo();
     
     // Setup WebSocket connection
     this.setupWebSocket();
   },
   
+  checkAndGetUserInfo: function() {
+    // 先检查本地是否已保存用户信息
+    const savedUserInfo = wx.getStorageSync('userInfo');
+    if (savedUserInfo && savedUserInfo.nickName) {
+      this.setData({
+        wxNickname: savedUserInfo.nickName,
+        wxAvatarUrl: savedUserInfo.avatarUrl
+      });
+      console.log('已使用保存的用户信息:', savedUserInfo.nickName);
+      return;
+    }
+    
+    // 如果没有保存的信息，静默尝试获取
+    this.getUserInfo();
+  },
+
   getUserInfo: function() {
     // 尝试获取用户信息
     wx.getUserProfile({
-      desc: '用于个性化问候',
+      desc: '用于提供个性化的医美咨询服务',
       success: (res) => {
+        const userInfo = {
+          nickName: res.userInfo.nickName,
+          avatarUrl: res.userInfo.avatarUrl
+        };
+        
+        // 保存用户信息到本地
+        wx.setStorageSync('userInfo', userInfo);
+        
         this.setData({
-          wxNickname: res.userInfo.nickName,
-          wxAvatarUrl: res.userInfo.avatarUrl
+          wxNickname: userInfo.nickName,
+          wxAvatarUrl: userInfo.avatarUrl
+        });
+        
+        console.log('获取用户信息成功:', userInfo.nickName);
+        wx.showToast({
+          title: `欢迎 ${userInfo.nickName}`,
+          icon: 'success',
+          duration: 2000
         });
       },
-      fail: () => {
-        // 用户拒绝授权，使用默认名称
-        console.log('用户拒绝授权获取用户信息');
+      fail: (error) => {
+        console.log('用户拒绝授权获取用户信息:', error);
+        // 显示一个温馨的提示，而不是强制要求授权
+        this.showUserInfoTip();
+      }
+    });
+  },
+
+  // 显示用户信息授权提示
+  showUserInfoTip: function() {
+    wx.showModal({
+      title: '个性化服务',
+      content: '授权微信昵称后，我们可以为您提供更个性化的医美咨询服务。您可以随时在设置中重新授权。',
+      showCancel: true,
+      cancelText: '暂不授权',
+      confirmText: '去授权',
+      success: (res) => {
+        if (res.confirm) {
+          // 用户点击"去授权"，再次尝试获取
+          this.getUserInfo();
+        } else {
+          // 用户选择暂不授权，设置默认昵称
+          this.setData({
+            wxNickname: '用户'
+          });
+        }
       }
     });
   },
@@ -63,12 +123,14 @@ Page({
   */
 
   // Rest of your existing methods...
-  onShow: function() {
-    this.scrollToBottom();
-  },
 
   scrollToBottom: function() {
-    setTimeout(() => {
+    // 防抖处理，避免频繁滚动
+    if (this.scrollTimer) {
+      clearTimeout(this.scrollTimer);
+    }
+    
+    this.scrollTimer = setTimeout(() => {
       // 只需要一个查询就够了
       wx.createSelectorQuery()
         .select('.chat-history')
@@ -80,12 +142,16 @@ Page({
             });
           }
         }).exec();
-    }, 100);
+    }, 200); // 增加延迟时间
   },
 
   // 建立 WebSocket 连接
   setupWebSocket: function () {
-    if (this.data.socketTask) return;
+    // 如果已有连接，先关闭
+    if (this.data.socketTask) {
+      this.data.socketTask.close();
+      this.setData({ socketTask: null });
+    }
   
     const wsUrl = `${getApp().globalData.wsBaseUrl}`;
     console.log('尝试连接WebSocket:', wsUrl);
@@ -102,6 +168,12 @@ Page({
     let reconnectTimer = null;
   
     const reconnect = () => {
+      // 如果页面已卸载或隐藏，不要重连
+      if (this.isPageUnloaded || this.isPageHidden) {
+        console.log('页面已卸载或隐藏，停止重连');
+        return;
+      }
+      
       if (reconnectCount < 5) { // 最多重连5次
         reconnectCount++;
         
@@ -114,6 +186,11 @@ Page({
         }
         
         reconnectTimer = setTimeout(() => {
+          // 再次检查页面状态
+          if (this.isPageUnloaded || this.isPageHidden) {
+            console.log('重连前检查：页面已卸载或隐藏，取消重连');
+            return;
+          }
           console.log(`开始第${reconnectCount}次重连`);
           this.setupWebSocket();
         }, delay);
@@ -123,8 +200,7 @@ Page({
     };
   
     socketTask.onOpen(() => {
-      this.setData({ socketTask });
-      console.log("WebSocket 连接成功");
+      console.log("WebSocket 连接成功，准备发送初始化消息");
       reconnectCount = 0; // 重置重连计数
       
       // 清除重连定时器
@@ -134,35 +210,48 @@ Page({
       }
       
       // 发送初始化消息
-      socketTask.send({
-        data: JSON.stringify({
-          type: 'init',
-          wxNickname: this.data.wxNickname || ''
-        })
-      });
+      try {
+        socketTask.send({
+          data: JSON.stringify({
+            type: 'init',
+            wxNickname: this.data.wxNickname || ''
+          })
+        });
+        console.log("初始化消息发送成功");
+      } catch (error) {
+        console.error("发送初始化消息失败:", error);
+      }
     });
   
     socketTask.onMessage((res) => {
       const data = JSON.parse(res.data);
-      let newMessages = [...this.data.messages];
-    
+      
       // 处理问候消息
       if (data.type === 'greeting') {
-        const greetingMessage = {
-          role: 'assistant',
-          content: data.data,
-          timestamp: Date.now(),
-          isGreeting: true
-        };
-        newMessages.unshift(greetingMessage);
-        this.setData({
-          messages: this.formatMessages(newMessages),
-          userId: data.userId || this.data.userId
-        }, () => {
-          this.scrollToBottom();
-        });
+        // 只有在没有消息或重连时才显示问候消息
+        let newMessages = [...this.data.messages];
+        
+        // 检查是否已经有相同的问候消息（避免重复）
+        const hasGreeting = newMessages.some(msg => msg.isGreeting && msg.content === data.data);
+        if (!hasGreeting) {
+          const greetingMessage = {
+            role: 'assistant',
+            content: data.data,
+            timestamp: Date.now(),
+            isGreeting: true
+          };
+          newMessages.unshift(greetingMessage);
+          this.setData({
+            messages: this.formatMessages(newMessages),
+            userId: data.userId || this.data.userId
+          }, () => {
+            this.scrollToBottom();
+          });
+        }
         return;
       }
+      
+      let newMessages = [...this.data.messages];
     
       if (data.data) {
         if (newMessages.length === 0 || newMessages[newMessages.length - 1].role !== 'assistant') {
@@ -184,38 +273,67 @@ Page({
         this.setData({
           messages: this.formatMessages(newMessages),
           lastMsgId: `msg-${newMessages.length - 1}`
-        }, () => {
-          // Add immediate scroll after message update
-          this.scrollToBottom();
         });
 
-        // Add TTS for AI responses
-        if (this.data.isVoiceMode) {
-          this.speakAIResponse(data.data);
-        }
+        // TTS will be handled when message is complete
+        // Removed per-chunk TTS to avoid fragmented audio
       }
     
       if (data.done) {
         // 确保最终的消息被保存
         wx.setStorageSync('messages', newMessages);
         this.setData({ isConnecting: false });
-        // Add final scroll after completion
-        setTimeout(() => this.scrollToBottom(), 300);
+        
+        // Play TTS for complete AI response if in voice mode
+        if (this.data.isVoiceMode && newMessages.length > 0) {
+          const lastMessage = newMessages[newMessages.length - 1];
+          if (lastMessage.role === 'assistant') {
+            // 暂时禁用 TTS，因为没有 TTS 服务端点
+            // this.speakAIResponse(lastMessage.content);
+            console.log('TTS 功能暂时禁用');
+          }
+        }
+        
+        // Add final scroll after completion only if user is near bottom
+        if (!this.data.showScrollToBottom) {
+          setTimeout(() => this.scrollToBottom(), 300);
+        }
       }
     });
   
-    socketTask.onClose(() => {
+    socketTask.onClose((res) => {
+      console.log("WebSocket 连接关闭 - 关闭码:", res.code, "关闭原因:", res.reason, "详细信息:", res);
       this.setData({ socketTask: null });
-      reconnect();
+      
+      // 根据关闭码决定是否重连
+      if (res.code === 1000) {
+        console.log("正常关闭，不重连");
+      } else {
+        console.log(`异常关闭码 ${res.code}，延迟后重连`);
+        // 增加延迟，给后端一些时间处理
+        setTimeout(() => {
+          if (!this.isPageUnloaded && !this.isPageHidden) {
+            reconnect();
+          }
+        }, 2000);
+      }
     });
   
     socketTask.onError((error) => {
-      console.error("WebSocket 错误:", error);
+      console.error("WebSocket 错误详情:", error);
       this.setData({ socketTask: null });
       wx.showToast({ title: "连接错误", icon: "none" });
-      reconnect();
+      
+      // 延迟重连，避免立即重连
+      console.log("发生错误，延迟后重连");
+      setTimeout(() => {
+        if (!this.isPageUnloaded && !this.isPageHidden) {
+          reconnect();
+        }
+      }, 3000);
     });
   
+    // 连接成功后再设置socketTask
     this.setData({ socketTask });
   },
 
@@ -236,24 +354,24 @@ Page({
       return;
     }
   
-    this.setData({ isConnecting: true });
-  
+    const userMessage = this.data.userInput; // 保存输入内容
+    
     this.data.socketTask.send({
       data: JSON.stringify({ 
-        prompt: this.data.userInput,
+        prompt: userMessage,
         wxNickname: this.data.wxNickname || ''
       }),
       success: () => {
         const newMessages = [...this.data.messages, {
           role: 'user',
-          content: this.data.userInput,
+          content: userMessage,
           timestamp: Date.now() // 添加时间戳
         }];
         this.setData({
           messages: newMessages,
           lastMsgId: `msg-${newMessages.length - 1}`,
           userInput: "",
-          isConnecting: false,
+          isConnecting: true, // 发送成功后才设置为连接中
         });
         wx.setStorageSync('messages', newMessages); // 保存到本地缓存
       },
@@ -266,7 +384,30 @@ Page({
 
   // 页面卸载时关闭 WebSocket
   onUnload: function () {
-    if (this.data.socketTask) this.data.socketTask.close();
+    this.isPageUnloaded = true; // 标记页面已卸载
+    if (this.data.socketTask) {
+      this.data.socketTask.close();
+      this.setData({ socketTask: null });
+    }
+    // 清理定时器
+    if (this.scrollTimer) {
+      clearTimeout(this.scrollTimer);
+    }
+  },
+
+  // 页面隐藏时也应该停止重连
+  onHide: function () {
+    this.isPageHidden = true;
+  },
+
+  // 页面显示时恢复连接
+  onShow: function() {
+    this.isPageHidden = false;
+    this.isPageUnloaded = false;
+    if (!this.data.socketTask) {
+      this.setupWebSocket();
+    }
+    this.scrollToBottom();
   },
 
   formatMessages: function(messages) {
@@ -367,7 +508,6 @@ Page({
 
   handleFocus: function() {
     this.scrollToBottom();
-    
   },
 
   switchToVoice: function() {
@@ -487,15 +627,16 @@ Page({
   },
 
   // Add text-to-speech for AI responses
-  speakAIResponse: function(text) {
-    const innerAudioContext = wx.createInnerAudioContext();
-    
-    // Get audio URL from your TTS service
-    const audioUrl = `${getApp().globalData.wsBaseUrl}/tts?text=${encodeURIComponent(text)}`;
-    
-    innerAudioContext.src = audioUrl;
-    innerAudioContext.play();
-  },
+  // TTS 功能暂时禁用，因为后端没有实现 TTS 端点
+  // speakAIResponse: function(text) {
+  //   const innerAudioContext = wx.createInnerAudioContext();
+  //   
+  //   // Get audio URL from your TTS service
+  //   const audioUrl = `${getApp().globalData.wsBaseUrl}/tts?text=${encodeURIComponent(text)}`;
+  //   
+  //   innerAudioContext.src = audioUrl;
+  //   innerAudioContext.play();
+  // },
 
   // 处理点击事件
   handleLinkTap: function(e) {
@@ -553,26 +694,22 @@ Page({
     const scrollTop = e.detail.scrollTop;
     const scrollHeight = e.detail.scrollHeight;
     
-    // 使用系统信息获取实际视口高度
-    const systemInfo = wx.getSystemInfoSync();
-    const clientHeight = systemInfo.windowHeight - 100; // 减去输入框等其他元素的高度
+    // 使用新的API获取窗口信息
+    const windowInfo = wx.getWindowInfo();
+    const clientHeight = windowInfo.windowHeight - 100; // 减去输入框等其他元素的高度
     
     // 判断是否滚动到距离底部超过一定距离
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    console.log("滚动信息:", {
-      scrollTop,
-      scrollHeight,
-      clientHeight,
-      distanceFromBottom
-    });
     
     // 只有当距离底部超过150px时才显示按钮
     if (distanceFromBottom > 150) {
-      this.setData({ showScrollToBottom: true });
-      console.log("显示回到底部按钮");
+      if (!this.data.showScrollToBottom) {
+        this.setData({ showScrollToBottom: true });
+      }
     } else {
-      this.setData({ showScrollToBottom: false });
-      console.log("隐藏回到底部按钮");
+      if (this.data.showScrollToBottom) {
+        this.setData({ showScrollToBottom: false });
+      }
     }
   },
 

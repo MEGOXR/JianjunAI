@@ -96,8 +96,22 @@ wss.on('connection', async (ws, req) => {
       
       if (data.type === 'init') {
         // 客户端初始化请求，重新发送问候
+        console.log('收到init消息:', data);
         const sanitizedNickname = SecurityMiddleware.sanitizeInput(data.wxNickname || '');
-        await chatController.handleConnection(ws, sanitizedNickname);
+        console.log('处理后的昵称:', sanitizedNickname);
+        
+        try {
+          await chatController.handleConnection(ws, sanitizedNickname);
+          console.log('handleConnection 处理完成');
+        } catch (error) {
+          console.error('handleConnection 处理失败:', error);
+          // 不要关闭连接，发送错误信息即可
+          ws.send(JSON.stringify({ 
+            type: 'error', 
+            data: '初始化失败', 
+            error: error.message 
+          }));
+        }
         return;
       }
       
