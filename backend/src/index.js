@@ -16,11 +16,20 @@ console.log(`- 工作目录: ${process.cwd()}`);
 console.log(`- 环境: ${process.env.NODE_ENV || 'development'}`);
 console.log(`- 端口: ${port}`);
 console.log(`- 原始 PORT 环境变量: ${JSON.stringify(process.env.PORT)}`);
+// 环境变量读取辅助函数（处理 Azure App Service 的 APPSETTING_ 前缀）
+function getEnvVar(name) {
+  return process.env[name] || process.env[`APPSETTING_${name}`] || null;
+}
+
 console.log('=== Azure OpenAI 配置 ===');
-console.log(`- AZURE_OPENAI_ENDPOINT: ${process.env.AZURE_OPENAI_ENDPOINT ? '已设置' : '未设置'}`);
-console.log(`- AZURE_OPENAI_API_KEY: ${process.env.AZURE_OPENAI_API_KEY ? '已设置 (长度: ' + process.env.AZURE_OPENAI_API_KEY.length + ')' : '未设置'}`);
-console.log(`- OPENAI_API_VERSION: ${process.env.OPENAI_API_VERSION || '未设置'}`);
-console.log(`- AZURE_OPENAI_DEPLOYMENT_NAME: ${process.env.AZURE_OPENAI_DEPLOYMENT_NAME || '未设置'}`);
+const azureEndpoint = getEnvVar('AZURE_OPENAI_ENDPOINT');
+const azureApiKey = getEnvVar('AZURE_OPENAI_API_KEY');  
+const azureApiVersion = getEnvVar('OPENAI_API_VERSION');
+const azureDeployment = getEnvVar('AZURE_OPENAI_DEPLOYMENT_NAME');
+console.log(`- AZURE_OPENAI_ENDPOINT: ${azureEndpoint ? '已设置 (' + azureEndpoint + ')' : '未设置'}`);
+console.log(`- AZURE_OPENAI_API_KEY: ${azureApiKey ? '已设置 (长度: ' + azureApiKey.length + ')' : '未设置'}`);
+console.log(`- OPENAI_API_VERSION: ${azureApiVersion || '未设置'}`);
+console.log(`- AZURE_OPENAI_DEPLOYMENT_NAME: ${azureDeployment || '未设置'}`);
 console.log('=== 其他环境变量 ===');
 console.log(`- WEBSITE_HOSTNAME: ${process.env.WEBSITE_HOSTNAME || '未设置'}`);
 console.log(`- WEBSITE_SITE_NAME: ${process.env.WEBSITE_SITE_NAME || '未设置'}`);
@@ -54,17 +63,17 @@ app.get('/config-check', (req, res) => {
       workingDirectory: process.cwd()
     },
     azure: {
-      endpoint: process.env.AZURE_OPENAI_ENDPOINT ? {
+      endpoint: azureEndpoint ? {
         status: '已设置',
-        value: process.env.AZURE_OPENAI_ENDPOINT
+        value: azureEndpoint
       } : '未设置',
-      apiKey: process.env.AZURE_OPENAI_API_KEY ? {
+      apiKey: azureApiKey ? {
         status: '已设置',
-        length: process.env.AZURE_OPENAI_API_KEY.length,
-        preview: process.env.AZURE_OPENAI_API_KEY.substring(0, 8) + '...'
+        length: azureApiKey.length,
+        preview: azureApiKey.substring(0, 8) + '...'
       } : '未设置',
-      apiVersion: process.env.OPENAI_API_VERSION || '未设置',
-      deployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME || '未设置'
+      apiVersion: azureApiVersion || '未设置',
+      deployment: azureDeployment || '未设置'
     },
     environment: {
       nodeEnv: process.env.NODE_ENV || '未设置',

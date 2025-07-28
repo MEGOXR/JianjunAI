@@ -4,11 +4,16 @@ const greetingService = require('../services/greetingService');
 const nameExtractorService = require('../services/nameExtractorService');
 const promptService = require('../services/promptService');
 
+// 环境变量读取辅助函数（处理 Azure App Service 的 APPSETTING_ 前缀）
+function getEnvVar(name) {
+  return process.env[name] || process.env[`APPSETTING_${name}`] || null;
+}
+
 // 从环境变量中获取 Azure OpenAI 配置
-const endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-const apiKey = process.env.AZURE_OPENAI_API_KEY;
-const apiVersion = process.env.OPENAI_API_VERSION;
-const deployment = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
+const endpoint = getEnvVar('AZURE_OPENAI_ENDPOINT');
+const apiKey = getEnvVar('AZURE_OPENAI_API_KEY');
+const apiVersion = getEnvVar('OPENAI_API_VERSION');
+const deployment = getEnvVar('AZURE_OPENAI_DEPLOYMENT_NAME');
 
 // 验证配置的函数（延迟到实际使用时检查）
 function validateAzureConfig() {
