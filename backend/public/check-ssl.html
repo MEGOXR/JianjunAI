@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SSL证书检查</title>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .result { margin: 20px 0; padding: 10px; border: 1px solid #ccc; }
+        .success { background-color: #d4edda; }
+        .error { background-color: #f8d7da; }
+    </style>
+</head>
+<body>
+    <h1>SSL证书和WebSocket连接检查</h1>
+    
+    <div id="results"></div>
+    
+    <script>
+        const results = document.getElementById('results');
+        
+        function addResult(message, isSuccess) {
+            const div = document.createElement('div');
+            div.className = `result ${isSuccess ? 'success' : 'error'}`;
+            div.textContent = message;
+            results.appendChild(div);
+        }
+        
+        // 检查当前页面的SSL
+        if (location.protocol === 'https:') {
+            addResult('✓ 当前页面使用HTTPS', true);
+            addResult(`证书域名: ${location.hostname}`, true);
+        }
+        
+        // 检查WebSocket连接
+        const wsUrl = 'wss://mego-xr.com/api';
+        addResult(`测试WebSocket连接: ${wsUrl}`, true);
+        
+        try {
+            const ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                addResult('✓ WebSocket握手成功！', true);
+                ws.close();
+            };
+            
+            ws.onerror = function(e) {
+                addResult('✗ WebSocket连接错误', false);
+                
+                // 尝试获取更多错误信息
+                fetch('https://mego-xr.com/api/health')
+                    .then(res => res.json())
+                    .then(data => {
+                        addResult(`✓ HTTPS API可访问: ${JSON.stringify(data)}`, true);
+                    })
+                    .catch(err => {
+                        addResult(`✗ HTTPS API错误: ${err.message}`, false);
+                    });
+            };
+            
+            ws.onclose = function(e) {
+                addResult(`WebSocket关闭 - 代码: ${e.code}, 原因: ${e.reason}`, e.code === 1008);
+            };
+            
+        } catch (e) {
+            addResult(`✗ 创建WebSocket失败: ${e.message}`, false);
+        }
+    </script>
+</body>
+</html>

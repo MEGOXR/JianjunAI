@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket测试</title>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #log {
+            border: 1px solid #ccc;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            background-color: #f5f5f5;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        button {
+            margin: 10px 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 16px;
+        }
+        .error { color: red; }
+        .success { color: green; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket连接测试</h1>
+    
+    <div>
+        <input type="text" id="wsUrl" value="wss://mego-xr.com/api" placeholder="WebSocket URL">
+        <button onclick="testConnection()">测试连接</button>
+        <button onclick="clearLog()">清除日志</button>
+    </div>
+    
+    <h3>测试日志：</h3>
+    <div id="log"></div>
+    
+    <script>
+        let ws = null;
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toISOString();
+            const className = type;
+            logDiv.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        function testConnection() {
+            const url = document.getElementById('wsUrl').value;
+            
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            
+            log(`开始连接: ${url}`, 'info');
+            
+            try {
+                // 创建WebSocket连接
+                ws = new WebSocket(url);
+                
+                // 设置二进制类型
+                ws.binaryType = 'arraybuffer';
+                
+                // 连接打开
+                ws.onopen = function(event) {
+                    log('WebSocket连接成功！', 'success');
+                    log(`连接状态: ${ws.readyState}`, 'success');
+                    log(`协议: ${ws.protocol || '无'}`, 'info');
+                    log(`扩展: ${ws.extensions || '无'}`, 'info');
+                    
+                    // 发送测试消息
+                    const testMsg = JSON.stringify({ 
+                        type: 'test',
+                        timestamp: new Date().toISOString()
+                    });
+                    log(`发送测试消息: ${testMsg}`, 'info');
+                    ws.send(testMsg);
+                };
+                
+                // 接收消息
+                ws.onmessage = function(event) {
+                    log(`收到消息: ${event.data}`, 'success');
+                };
+                
+                // 连接关闭
+                ws.onclose = function(event) {
+                    log(`连接关闭 - 代码: ${event.code}, 原因: ${event.reason}`, 'error');
+                    log(`是否正常关闭: ${event.wasClean}`, 'info');
+                };
+                
+                // 连接错误
+                ws.onerror = function(error) {
+                    log(`WebSocket错误: ${error.type}`, 'error');
+                    
+                    // 尝试获取更多错误信息
+                    if (error.message) {
+                        log(`错误消息: ${error.message}`, 'error');
+                    }
+                    
+                    // 检查浏览器控制台
+                    log('请检查浏览器控制台获取更多错误详情', 'error');
+                };
+                
+            } catch (e) {
+                log(`创建WebSocket时发生错误: ${e.message}`, 'error');
+            }
+        }
+        
+        // 页面加载时自动测试
+        window.onload = function() {
+            log('WebSocket测试页面已加载', 'info');
+            log('浏览器: ' + navigator.userAgent, 'info');
+            
+            // 检查WebSocket支持
+            if (!window.WebSocket) {
+                log('浏览器不支持WebSocket!', 'error');
+            } else {
+                log('浏览器支持WebSocket', 'success');
+            }
+        };
+    </script>
+</body>
+</html>

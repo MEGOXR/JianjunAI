@@ -95,7 +95,8 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
     const currentName = userData?.userInfo?.extractedName;
     if (!currentName || await nameExtractorService.shouldUpdateName(currentName, prompt)) {
       // 获取对话历史用于名字提取
-      const history = chatHistories.get(userId) || [];
+      const historyObj = chatHistories.get(userId);
+      const history = historyObj ? historyObj.messages || [] : [];
       const messagesForExtraction = [...history, { role: 'user', content: prompt }];
       
       // 使用LLM提取名字
@@ -131,18 +132,53 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
     
     // 更新最后访问时间
     let historyData = chatHistories.get(userId);
+    console.log('获取到的historyData:', historyData, '类型:', typeof historyData);
+    
     if (Array.isArray(historyData)) {
       // 兼容旧格式
+      console.log('转换旧格式数组为新对象格式');
       chatHistories.set(userId, {
         messages: historyData,
         lastAccess: Date.now()
       });
       historyData = chatHistories.get(userId);
-    } else {
+    } else if (historyData && typeof historyData === 'object') {
       historyData.lastAccess = Date.now();
+    } else {
+      console.log('historyData为空或无效，重新初始化');
+      historyData = {
+        messages: [
+          {
+            role: "system",
+            content: promptService.getSystemPrompt()
+          }
+        ],
+        lastAccess: Date.now()
+      };
+      chatHistories.set(userId, historyData);
     }
 
-    const history = Array.isArray(historyData) ? historyData : historyData.messages;
+    let history;
+    if (Array.isArray(historyData)) {
+      // 兼容旧格式：直接是数组
+      history = historyData;
+    } else if (historyData && Array.isArray(historyData.messages)) {
+      // 新格式：对象包含messages数组
+      history = historyData.messages;
+    } else {
+      // 初始化默认历史记录
+      history = [
+        {
+          role: "system",
+          content: promptService.getSystemPrompt()
+        }
+      ];
+      console.log('初始化默认历史记录');
+    }
+    
+    console.log('最终history数组长度:', history.length);
+    console.log('history是数组:', Array.isArray(history));
+    
     // 添加用户新消息
     history.push({ role: "user", content: prompt });
 
@@ -161,8 +197,15 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
       deployment,
     });
 
+    // 最终验证 history 是数组
+    if (!Array.isArray(history)) {
+      console.error('history不是数组！类型:', typeof history, '内容:', history);
+      throw new Error('History must be an array');
+    }
+    
     console.log('准备调用Azure OpenAI，历史消息数:', history.length);
     console.log('部署名称:', deployment);
+    console.log('history数组示例:', history.slice(0, 2));
     
     const stream = await client.chat.completions.create({
       model: deployment,  // 使用环境变量中的部署名称
@@ -195,6 +238,7 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
           .replace(/`([^`]+)`/g, '「$1」')           // 行内代码
           .replace(/[#*_`~]/g, '');                  // 移除残留符号
         ws.send(JSON.stringify({ data: cleanedContent }));
+        console.log('发送消息片段，长度:', cleanedContent.length);
       }
 
       // 如果 AI 给出了完整的段落结束标志
@@ -208,6 +252,11 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
     const cleanedResponse = promptService.cleanMarkdownForWeChat(assistantResponse);
     
     // 将清理后的 AI 回复添加到历史记录中
+    if (!Array.isArray(history)) {
+      console.error('在push回复时，history不是数组！类型:', typeof history);
+      throw new Error('History must be an array for push operation');
+    }
+    
     history.push({ role: "assistant", content: cleanedResponse });
 
     // 恢复为原来的历史记录长度限制
@@ -220,12 +269,23 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
     
     // 更新内存中的历史记录
     const updatedHistoryData = chatHistories.get(userId);
-    if (updatedHistoryData && !Array.isArray(updatedHistoryData)) {
-      updatedHistoryData.messages = history;
-      updatedHistoryData.lastAccess = Date.now();
+    if (updatedHistoryData) {
+      if (Array.isArray(updatedHistoryData)) {
+        // 如果是旧格式数组，替换为新格式对象
+        chatHistories.set(userId, {
+          messages: history,
+          lastAccess: Date.now()
+        });
+      } else {
+        // 新格式对象，更新messages和lastAccess
+        updatedHistoryData.messages = history;
+        updatedHistoryData.lastAccess = Date.now();
+      }
     }
 
+    console.log('发送done标记给客户端');
     ws.send(JSON.stringify({ done: true }));
+    console.log('done标记发送完成');
   } catch (error) {
     console.error("Azure OpenAI 调用出错:", error);
     console.error("错误详情:", {
@@ -233,7 +293,25 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
       stack: error.stack,
       response: error.response?.data
     });
-    ws.send(JSON.stringify({ error: "服务器内部错误", details: error.message }));
+    
+    // 检查是否是内容过滤错误
+    if (error.code === 'content_filter' || error.message?.includes('content management policy')) {
+      // 发送友好的内容过滤回复
+      const contentFilterResponse = "很抱歉，您的消息涉及一些敏感内容，我无法回复。作为您的整形美容顾问，我更希望为您提供专业的医疗咨询服务。\n\n请问您有什么关于整形美容方面的问题吗？比如：\n• 面部轮廓改善\n• 皮肤护理建议\n• 手术方案咨询\n• 术后恢复指导\n\n我会用专业的知识为您解答～";
+      
+      // 模拟流式发送友好回复
+      const chunks = contentFilterResponse.split('');
+      for (let i = 0; i < chunks.length; i += 2) {
+        const chunk = chunks.slice(i, i + 2).join('');
+        ws.send(JSON.stringify({ data: chunk }));
+        // 添加小延迟模拟真实的流式响应
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      ws.send(JSON.stringify({ done: true }));
+    } else {
+      // 其他错误的通用处理
+      ws.send(JSON.stringify({ error: "服务器内部错误", details: error.message }));
+    }
   }
 };
 

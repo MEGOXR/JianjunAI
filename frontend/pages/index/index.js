@@ -22,6 +22,10 @@ Page({
       wx.setStorageSync('userId', userId);
     }
     
+    // 临时清理本地存储（用于调试）
+    console.log('清理本地消息存储');
+    wx.removeStorageSync('messages');
+    
     // 恢复聊天记录
     const savedMessages = wx.getStorageSync('messages') || [];
     
@@ -155,12 +159,14 @@ Page({
   
     const wsUrl = `${getApp().globalData.wsBaseUrl}`;
     console.log('尝试连接WebSocket:', wsUrl);
+    console.log('User-Id:', this.data.userId);
+    console.log('Wx-Nickname:', this.data.wxNickname);
     
     const socketTask = wx.connectSocket({
       url: wsUrl,
       header: { 
-        "User-Id": this.data.userId,
-        "Wx-Nickname": encodeURIComponent(this.data.wxNickname || '')
+        "user-id": this.data.userId,
+        "wx-nickname": encodeURIComponent(this.data.wxNickname || '')
       },
     });
   
@@ -224,16 +230,22 @@ Page({
     });
   
     socketTask.onMessage((res) => {
+      console.log('接收到WebSocket消息:', res.data);
       const data = JSON.parse(res.data);
+      let newMessages = [...this.data.messages]; // 在顶部声明
       
       // 处理问候消息
       if (data.type === 'greeting') {
-        // 只有在没有消息或重连时才显示问候消息
-        let newMessages = [...this.data.messages];
+        console.log('处理问候消息:', data.data);
+        console.log('当前消息数量:', newMessages.length);
         
         // 检查是否已经有相同的问候消息（避免重复）
-        const hasGreeting = newMessages.some(msg => msg.isGreeting && msg.content === data.data);
-        if (!hasGreeting) {
+        // 只检查最近的问候消息，避免历史问候消息干扰
+        const recentGreetings = newMessages.filter(msg => msg.isGreeting);
+        const hasRecentGreeting = recentGreetings.length > 0 && recentGreetings[0].content === data.data;
+        console.log('是否已有相同问候消息:', hasRecentGreeting, '问候消息数量:', recentGreetings.length);
+        
+        if (!hasRecentGreeting) {
           const greetingMessage = {
             role: 'assistant',
             content: data.data,
@@ -241,19 +253,45 @@ Page({
             isGreeting: true
           };
           newMessages.unshift(greetingMessage);
+          console.log('添加问候消息后，消息数量:', newMessages.length);
+          
+          const formattedMessages = this.formatMessages(newMessages);
+          console.log('格式化后消息数量:', formattedMessages.length);
+          
           this.setData({
-            messages: this.formatMessages(newMessages),
+            messages: formattedMessages,
             userId: data.userId || this.data.userId
           }, () => {
+            console.log('问候消息setData完成');
             this.scrollToBottom();
           });
+          
+          // 保存到本地存储
+          wx.setStorageSync('messages', newMessages);
         }
         return;
       }
       
-      let newMessages = [...this.data.messages];
-    
+      // 处理初始化消息
+      if (data.type === 'init') {
+        console.log('收到init消息，忽略');
+        return;
+      }
+      
+      // 处理错误消息
+      if (data.error) {
+        console.error('收到服务器错误:', data.error, data.details);
+        this.setData({ isConnecting: false });
+        wx.showToast({ 
+          title: "服务器错误: " + data.details, 
+          icon: "none",
+          duration: 3000
+        });
+        return;
+      }
+      
       if (data.data) {
+        console.log('接收到消息片段:', data.data);
         if (newMessages.length === 0 || newMessages[newMessages.length - 1].role !== 'assistant') {
           // 创建新的AI消息
           const newAiMessage = {
@@ -280,9 +318,11 @@ Page({
       }
     
       if (data.done) {
+        console.log('收到done标记，消息总数:', newMessages.length);
         // 确保最终的消息被保存
         wx.setStorageSync('messages', newMessages);
         this.setData({ isConnecting: false });
+        console.log('消息接收完成，isConnecting已重置为false');
         
         // Play TTS for complete AI response if in voice mode
         if (this.data.isVoiceMode && newMessages.length > 0) {
@@ -303,7 +343,10 @@ Page({
   
     socketTask.onClose((res) => {
       console.log("WebSocket 连接关闭 - 关闭码:", res.code, "关闭原因:", res.reason, "详细信息:", res);
-      this.setData({ socketTask: null });
+      this.setData({ 
+        socketTask: null,
+        isConnecting: false // 重置连接状态
+      });
       
       // 根据关闭码决定是否重连
       if (res.code === 1000) {
@@ -321,7 +364,10 @@ Page({
   
     socketTask.onError((error) => {
       console.error("WebSocket 错误详情:", error);
-      this.setData({ socketTask: null });
+      this.setData({ 
+        socketTask: null,
+        isConnecting: false // 重置连接状态
+      });
       wx.showToast({ title: "连接错误", icon: "none" });
       
       // 延迟重连，避免立即重连
@@ -373,7 +419,17 @@ Page({
           userInput: "",
           isConnecting: true, // 发送成功后才设置为连接中
         });
+        console.log('消息发送成功，isConnecting设置为true');
         wx.setStorageSync('messages', newMessages); // 保存到本地缓存
+        
+        // 添加超时机制，30秒后自动重置状态
+        setTimeout(() => {
+          if (this.data.isConnecting) {
+            console.log('响应超时，重置isConnecting状态');
+            this.setData({ isConnecting: false });
+            wx.showToast({ title: "响应超时，请重试", icon: "none" });
+          }
+        }, 30000);
       },
       fail: () => {
         wx.showToast({ title: "发送失败", icon: "none" });
