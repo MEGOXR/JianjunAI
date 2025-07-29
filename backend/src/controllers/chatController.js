@@ -336,7 +336,7 @@ exports.handleConnection = async (ws, wxNickname) => {
     console.log('获取用户数据成功');
     
     // 生成智能问候语
-    const greeting = greetingService.generateGreeting(userData, wxNickname);
+    const greeting = await greetingService.generateGreeting(userData, wxNickname);
     console.log('生成问候语成功:', greeting.substring(0, 50) + '...');
     
     // 更新用户最后访问时间
