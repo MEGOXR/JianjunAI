@@ -18,7 +18,9 @@
       "Bash(touch:*)",
       "Bash(rm:*)",
       "Bash(curl:*)",
-      "Bash(del \"D:\\AIDev\\JianjunAI\\backend\\test-jwt-websocket.js\")"
+      "Bash(del \"D:\\AIDev\\JianjunAI\\backend\\test-jwt-websocket.js\")",
+      "Bash(echo:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }

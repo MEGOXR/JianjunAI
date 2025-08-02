@@ -232,8 +232,10 @@ Page({
       this.setData({
         [`messages[${idx}].content`]: mergedContent
       }, () => {
-        // 刷新UI后，安排一次智能滚动
-        this.scheduleAutoScroll();
+        // 流式消息更新时也确保滚动到底部
+        if (!this.data.userHasScrolledUp) {
+          this.scheduleAutoScroll();
+        }
       });
     }
     // 清除定时器句柄
@@ -254,8 +256,13 @@ Page({
     this.scrollTimer = setTimeout(() => {
       this.scrollTimer = null;
       if (!this.data.userHasScrolledUp) {
-        // 【关键修正】始终滚动到底部锚点
-        this.setData({ scrollIntoView: 'chat-bottom-anchor' });
+        // 【关键修正】先清空然后重新设置，确保滚动生效
+        this.setData({ scrollIntoView: '' }, () => {
+          // 短暂延迟后设置滚动锚点
+          setTimeout(() => {
+            this.setData({ scrollIntoView: 'chat-bottom-anchor' });
+          }, 50);
+        });
       }
     }, 100);
   },
@@ -273,10 +280,13 @@ Page({
   forceScrollToBottom: function() {
     this.setData({
       userHasScrolledUp: false,
-      showScrollToBottom: false
+      showScrollToBottom: false,
+      scrollIntoView: '' // 先清空
     }, () => {
-      // 强制滚动也使用节流调度，避免冲突
-      this.scheduleAutoScroll();
+      // 立即设置滚动锚点，不使用节流
+      setTimeout(() => {
+        this.setData({ scrollIntoView: 'chat-bottom-anchor' });
+      }, 50);
     });
   },
 
@@ -456,10 +466,43 @@ Page({
       if (data.data) {
         // 如果是第一个分片，先创建一条空的AI消息占位
         if (this._stream.targetIndex == null) {
+          const app = getApp();
           const msg = { role: 'assistant', content: '', timestamp: Date.now(), suggestions: [] };
+          
+          // 获取上一条消息的时间戳
+          const lastMessage = this.data.messages.length > 0 ? 
+            this.data.messages[this.data.messages.length - 1] : null;
+          const lastTimestamp = lastMessage ? lastMessage.timestamp : null;
+          
+          // 计算是否应该显示时间
+          const timeDiff = lastTimestamp ? (msg.timestamp - lastTimestamp) : null;
+          const shouldShowTime = !lastTimestamp || timeDiff > 5 * 60 * 1000;
+          
+          // 设置时间显示
+          if (shouldShowTime) {
+            const now = new Date();
+            const messageDate = new Date(msg.timestamp);
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const messageDay = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
+            const daysDiff = Math.floor((today.getTime() - messageDay.getTime()) / (24 * 60 * 60 * 1000));
+            
+            if (daysDiff === 0) {
+              msg.formattedDate = app.getFormattedTime(msg.timestamp);
+            } else if (daysDiff === 1) {
+              msg.formattedDate = `昨天 ${app.getFormattedTime(msg.timestamp)}`;
+            } else {
+              const month = messageDate.getMonth() + 1;
+              const day = messageDate.getDate();
+              msg.formattedDate = `${month}月${day}日 ${app.getFormattedTime(msg.timestamp)}`;
+            }
+          } else {
+            msg.formattedDate = '';
+          }
+          msg.formattedTime = app.getFormattedTime(msg.timestamp);
+          
           const idx = this.data.messages.length;
           this.setData({ 
-            [`messages[${idx}]`]: this.formatMessages([msg])[0], 
+            [`messages[${idx}]`]: msg, 
             isConnecting: true 
           });
           this._stream.targetIndex = idx;
@@ -509,9 +552,12 @@ Page({
           }
         }
         
-        // 智能滚动：检查用户是否已向上滚动
+        // 智能滚动：AI回复完成时强制滚动到底部，确保完整显示
         if (!this.data.userHasScrolledUp) {
-          this.scrollToBottom();
+          // 延迟滚动，确保DOM完全更新
+          setTimeout(() => {
+            this.forceScrollToBottom();
+          }, 150);
         }
       }
     });
@@ -567,6 +613,7 @@ Page({
   sendMessage: function() {
     if (!this.data.userInput || this.data.isConnecting) return;
 
+    const app = getApp();
     const userMessageContent = this.data.userInput;
     
     const newUserMessage = {
@@ -575,15 +622,48 @@ Page({
       timestamp: Date.now()
     };
 
-    const formattedNewUserMessage = this.formatMessages([newUserMessage])[0];
+    // 获取上一条消息的时间戳
+    const lastMessage = this.data.messages.length > 0 ? 
+      this.data.messages[this.data.messages.length - 1] : null;
+    const lastTimestamp = lastMessage ? lastMessage.timestamp : null;
+    
+    // 计算是否应该显示时间
+    const timeDiff = lastTimestamp ? (newUserMessage.timestamp - lastTimestamp) : null;
+    const shouldShowTime = !lastTimestamp || timeDiff > 5 * 60 * 1000;
+    
+    // 手动设置时间显示
+    if (shouldShowTime) {
+      const app = getApp();
+      const now = new Date();
+      const messageDate = new Date(newUserMessage.timestamp);
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const messageDay = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
+      const daysDiff = Math.floor((today.getTime() - messageDay.getTime()) / (24 * 60 * 60 * 1000));
+      
+      if (daysDiff === 0) {
+        // 今天：仅显示时间
+        newUserMessage.formattedDate = app.getFormattedTime(newUserMessage.timestamp);
+      } else if (daysDiff === 1) {
+        // 昨天
+        newUserMessage.formattedDate = `昨天 ${app.getFormattedTime(newUserMessage.timestamp)}`;
+      } else {
+        // 更早的日期
+        const month = messageDate.getMonth() + 1;
+        const day = messageDate.getDate();
+        newUserMessage.formattedDate = `${month}月${day}日 ${app.getFormattedTime(newUserMessage.timestamp)}`;
+      }
+    } else {
+      newUserMessage.formattedDate = '';
+    }
+    newUserMessage.formattedTime = app.getFormattedTime(newUserMessage.timestamp);
 
     this.setData({
-      messages: this.data.messages.concat(formattedNewUserMessage),
+      messages: this.data.messages.concat(newUserMessage),
       userInput: "",
       isConnecting: true,
     }, () => {
-      // 发送后立即安排滚动
-      this.scheduleAutoScroll();
+      // 发送消息时强制滚动到底部
+      this.forceScrollToBottom();
     });
     
     this.socketTask.send({
@@ -663,22 +743,36 @@ Page({
       let formattedDate = '';
       const formattedTime = app.getFormattedTime(currentTimestamp);
   
-      // 仅当首次消息或与上一条消息的间隔超过30分钟时，插入时间戳显示
-      if (!lastMessageTimestamp || (currentTimestamp - lastMessageTimestamp) > 30 * 60 * 1000) {
-        if (messageDay.getTime() === today.getTime()) {
-          // 今天：只显示时间
+      // 微信规则：5分钟内的消息不显示时间，超过5分钟才显示
+      const timeDiff = currentTimestamp - (lastMessageTimestamp || 0);
+      const shouldShowTime = !lastMessageTimestamp || timeDiff > 5 * 60 * 1000;
+
+      if (shouldShowTime) {
+        const daysDiff = Math.floor((today.getTime() - messageDay.getTime()) / (24 * 60 * 60 * 1000));
+        
+        if (daysDiff === 0) {
+          // 今天：仅显示时间
           formattedDate = formattedTime;
-        } else if (messageDay.getTime() === yesterday.getTime()) {
-          // 昨天：显示"昨天"+时间
+        } else if (daysDiff === 1) {
+          // 昨天：昨天 + 时间
           formattedDate = `昨天 ${formattedTime}`;
-        } else if (messageDay >= weekStart) {
-          // 同一周内：显示星期几+时间
+        } else if (daysDiff <= 6 && messageDay >= weekStart) {
+          // 本周内（2-6天前）：星期几 + 时间
           const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
           formattedDate = `星期${weekDays[messageDate.getDay()]} ${formattedTime}`;
+        } else if (messageDate.getFullYear() === now.getFullYear()) {
+          // 今年：月/日 + 时间
+          const month = messageDate.getMonth() + 1;
+          const day = messageDate.getDate();
+          formattedDate = `${month}月${day}日 ${formattedTime}`;
         } else {
-          // 本周之前：显示具体日期+时间
-          formattedDate = `${app.getFormattedDate(currentTimestamp)} ${formattedTime}`;
+          // 往年：年/月/日 + 时间
+          const year = messageDate.getFullYear();
+          const month = messageDate.getMonth() + 1;
+          const day = messageDate.getDate();
+          formattedDate = `${year}年${month}月${day}日 ${formattedTime}`;
         }
+        
       }
       
       // 【关键简化】不再处理segments，直接返回消息
@@ -688,6 +782,7 @@ Page({
         formattedTime,
       });
       
+      // 无论是否显示时间，都要更新lastMessageTimestamp以便下次比较
       lastMessageTimestamp = currentTimestamp;
     });
     return newMessages;
@@ -696,7 +791,7 @@ Page({
 
   handleFocus: function() {
     // 点击输入框时强制滚动到底部
-    this.scrollToBottom(true);
+    this.forceScrollToBottom();
   },
 
   switchToVoice: function() {
@@ -772,18 +867,47 @@ Page({
 
   // 【修正】sendVoiceMessage 函数
   sendVoiceMessage: function(text) {
+    const app = getApp();
     const newUserMessage = {
       role: 'user',
       content: text,
       timestamp: Date.now()
     };
 
-    // 只格式化单条新消息
-    const formattedNewUserMessage = this.formatMessages([newUserMessage])[0];
+    // 获取上一条消息的时间戳
+    const lastMessage = this.data.messages.length > 0 ? 
+      this.data.messages[this.data.messages.length - 1] : null;
+    const lastTimestamp = lastMessage ? lastMessage.timestamp : null;
+    
+    // 计算是否应该显示时间
+    const timeDiff = lastTimestamp ? (newUserMessage.timestamp - lastTimestamp) : null;
+    const shouldShowTime = !lastTimestamp || timeDiff > 5 * 60 * 1000;
+    
+    // 设置时间显示
+    if (shouldShowTime) {
+      const now = new Date();
+      const messageDate = new Date(newUserMessage.timestamp);
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const messageDay = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
+      const daysDiff = Math.floor((today.getTime() - messageDay.getTime()) / (24 * 60 * 60 * 1000));
+      
+      if (daysDiff === 0) {
+        newUserMessage.formattedDate = app.getFormattedTime(newUserMessage.timestamp);
+      } else if (daysDiff === 1) {
+        newUserMessage.formattedDate = `昨天 ${app.getFormattedTime(newUserMessage.timestamp)}`;
+      } else {
+        const month = messageDate.getMonth() + 1;
+        const day = messageDate.getDate();
+        newUserMessage.formattedDate = `${month}月${day}日 ${app.getFormattedTime(newUserMessage.timestamp)}`;
+      }
+    } else {
+      newUserMessage.formattedDate = '';
+    }
+    newUserMessage.formattedTime = app.getFormattedTime(newUserMessage.timestamp);
 
     // 使用 concat 增量更新
     this.setData({
-      messages: this.data.messages.concat(formattedNewUserMessage)
+      messages: this.data.messages.concat(newUserMessage)
     }, () => {
       // 立即调度滚动
       this.scheduleAutoScroll();

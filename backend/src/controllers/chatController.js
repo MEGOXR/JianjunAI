@@ -277,17 +277,16 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
       model: deployment,  // 使用环境变量中的部署名称
       messages: history,
       stream: true,
-      max_tokens: 1000,     // 增加长度限制以允许更详细的回答
+      max_tokens: 2000,     // 保持合理的token限制
       temperature: 0.5,
       presence_penalty: 0.1,
       frequency_penalty: 0.2,
-      stop: null  // 移除停止符号，让 AI 自然地完成回答
+      stop: null  // 让 AI 自然地完成回答
     });
     
     console.log('Azure OpenAI流创建成功');
 
     let assistantResponse = '';
-    let isComplete = false;
 
     // 流式处理 AI 的回复
     for await (const chunk of stream) {
@@ -307,10 +306,10 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
         console.log('发送消息片段，长度:', cleanedContent.length);
       }
 
-      // 如果 AI 给出了完整的段落结束标志
-      if (chunk.choices?.[0]?.delta?.finish_reason) {
-        isComplete = true;
-        break;  // 确保在这里完成，不会继续请求
+      // 检查是否完成
+      if (chunk.choices?.[0]?.finish_reason) {
+        console.log('AI完成回复，原因:', chunk.choices[0].finish_reason);
+        break;
       }
     }
 
