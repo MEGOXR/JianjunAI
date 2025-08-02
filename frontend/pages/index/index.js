@@ -1,57 +1,73 @@
 Page({
+  // data 中只保留纯粹用于UI渲染的、轻量的数据
   data: {
     userInput: "", 
-    isFocused: false,
     isConnecting: false, 
-    socketTask: null, 
     messages: [], 
-    userId: null, 
-    lastMsgId: "",
     isVoiceMode: true,
     isRecording: false,
     showScrollToBottom: false,
-    userScrolling: false,
-    chatHistoryHeight: 0
+    userHasScrolledUp: false,
+    scrollIntoView: '', // 替代scrollTop，用于精确滚动
+    wxNickname: '',
+    wxAvatarUrl: ''
   },
 
   onLoad: function() {
-    // Get user ID from storage or generate new one
-    let userId = wx.getStorageSync('userId');
+    // ---- 非UI数据，作为实例属性存在 ----
+    this.userId = null;
+    this.socketTask = null;
+    this.authToken = null;
     
-    // Validate existing user ID format
-    const isValidUserId = (id) => {
-      return id && typeof id === 'string' && /^user_[a-zA-Z0-9]{10,25}$/.test(id);
+    // 定时器句柄
+    this.reconnectTimer = null;
+    this.scrollTimer = null; // 用于滚动节流
+    this.scrollEventTimer = null; // 用于onScroll事件节流
+
+    // 流式渲染的缓冲和节流控制器
+    this._stream = { 
+      buf: '',             // 缓冲区
+      timer: null,           // 节流定时器
+      targetIndex: null      // 当前正在接收流的message索引
     };
+
+    // 【优化③】一次性初始化录音管理器并注册监听
+    this.recorderManager = wx.getRecorderManager();
+    this.recorderManager.onStart(() => {
+      this.setData({ isRecording: true });
+      wx.showToast({ title: '正在录音...', icon: 'none', duration: 60000 });
+    });
+    this.recorderManager.onStop((res) => {
+      wx.hideToast();
+      this.setData({ isRecording: false });
+      this.uploadVoice(res.tempFilePath);
+    });
+    // ---- End: 非UI数据 ----
+
+    // 【优化：userId Bug修复】
+    let userId = wx.getStorageSync('userId');
+    const isValidUserId = (id) => id && typeof id === 'string' && /^user_[a-zA-Z0-9]{10,25}$/.test(id);
     
     if (!userId || !isValidUserId(userId)) {
-      // Clear invalid user ID and generate new one
-      if (userId && !isValidUserId(userId)) {
-        console.log('Clearing invalid user ID:', userId);
-        wx.removeStorageSync('userId');
-      }
-      
-      // Generate user ID in the format expected by security middleware: user_[a-zA-Z0-9]{10,30}
-      // Use shorter timestamp and random string to ensure total length is within limits
-      const timestamp = Date.now().toString(36).substring(-6); // Last 6 chars of timestamp in base36
-      const random = Math.random().toString(36).substring(2, 10); // 8 chars random
-      userId = `user_${timestamp}${random}`; // user_ (5) + timestamp (6) + random (8) = 19 chars total
+      const timestamp = Date.now().toString(36).slice(-6); // 使用 slice(-6) 修正
+      const random = Math.random().toString(36).substring(2, 10);
+      userId = `user_${timestamp}${random}`;
       wx.setStorageSync('userId', userId);
-      console.log('Generated new user ID:', userId);
     }
-    
-    // 恢复聊天记录
+    this.userId = userId; // 存到实例属性
+
+    // 【优化：历史消息裁剪】
     const savedMessages = wx.getStorageSync('messages') || [];
-    
     this.setData({ 
-      userId,
-      messages: this.formatMessages(savedMessages)
+      messages: this.trimMessages(this.formatMessages(savedMessages))
+    }, () => {
+      if (savedMessages.length > 0) {
+        setTimeout(() => this.forceScrollToBottom(), 300);
+      }
     });
     
-    // 先检查用户信息，然后再初始化认证和WebSocket
     this.checkAndGetUserInfo(() => {
-      // 在获取用户信息后再进行认证，认证完成后再建立WebSocket连接
-      this.initializeAuth(userId, () => {
-        // Setup WebSocket connection only after authentication is complete
+      this.initializeAuth(this.userId, () => {
         this.setupWebSocket();
       });
     });
@@ -156,7 +172,7 @@ Page({
     
     // Check if token exists and is still valid
     if (storedToken && tokenExpiry && new Date(tokenExpiry) > new Date()) {
-      this.setData({ authToken: storedToken });
+      this.authToken = storedToken;
       console.log('Using existing JWT token');
       if (callback) callback();
     } else {
@@ -185,7 +201,7 @@ Page({
           const expiryTime = new Date(Date.now() + 23 * 60 * 60 * 1000);
           wx.setStorageSync('tokenExpiry', expiryTime.toISOString());
           
-          this.setData({ authToken: res.data.token });
+          this.authToken = res.data.token;
           console.log('JWT token obtained successfully');
           if (callback) callback();
         } else {
@@ -204,53 +220,90 @@ Page({
     });
   },
   
-  // Rest of your existing methods...
-
-  scrollToBottom: function() {
-    // 防抖处理，避免频繁滚动
-    if (this.scrollTimer) {
-      clearTimeout(this.scrollTimer);
+  // 【新增】一个用于将缓冲区内容刷新到UI的函数
+  flushStream: function() {
+    if (this._stream.buf && this._stream.targetIndex != null) {
+      const idx = this._stream.targetIndex;
+      // 拼接缓冲区内容到已有内容
+      const mergedContent = this.data.messages[idx].content + this._stream.buf;
+      // 清空缓冲区
+      this._stream.buf = '';
+      
+      this.setData({
+        [`messages[${idx}].content`]: mergedContent
+      }, () => {
+        // 刷新UI后，安排一次智能滚动
+        this.scheduleAutoScroll();
+      });
     }
-    
+    // 清除定时器句柄
+    this._stream.timer = null;
+  },
+
+  // 【新增】历史消息裁剪函数
+  trimMessages: function(list, limit = 100) {
+    if (list.length <= limit) return list;
+    // 可以返回一个提示，或直接截断
+    return list.slice(-limit);
+  },
+
+  // 【修正】一个节流的滚动调度函数
+  scheduleAutoScroll: function() {
+    if (this.scrollTimer) return;
+
     this.scrollTimer = setTimeout(() => {
-      // 只需要一个查询就够了
-      wx.createSelectorQuery()
-        .select('.chat-history')
-        .scrollOffset((res) => {
-          if (res) {
-            this.setData({
-              lastMsgId: `msg-${this.data.messages.length - 1}`,
-              scrollTop: res.scrollHeight + 1000
-            });
-          }
-        }).exec();
-    }, 200); // 增加延迟时间
+      this.scrollTimer = null;
+      if (!this.data.userHasScrolledUp) {
+        // 【关键修正】始终滚动到底部锚点
+        this.setData({ scrollIntoView: 'chat-bottom-anchor' });
+      }
+    }, 100);
+  },
+
+  scrollToBottom: function(force = false) {
+    if (!force && this.data.userHasScrolledUp) {
+      return;
+    }
+
+    // 使用新的调度函数
+    this.scheduleAutoScroll();
+  },
+
+  // 【修正】强制滚动逻辑
+  forceScrollToBottom: function() {
+    this.setData({
+      userHasScrolledUp: false,
+      showScrollToBottom: false
+    }, () => {
+      // 强制滚动也使用节流调度，避免冲突
+      this.scheduleAutoScroll();
+    });
   },
 
   // 建立 WebSocket 连接
   setupWebSocket: function () {
     // 如果已有连接，先关闭
-    if (this.data.socketTask) {
-      this.data.socketTask.close();
-      this.setData({ socketTask: null });
+    if (this.socketTask) {
+      this.socketTask.close();
+      this.socketTask = null;
     }
   
     const wsUrl = `${getApp().globalData.wsBaseUrl}`;
     console.log('尝试连接WebSocket:', wsUrl);
-    console.log('User-Id:', this.data.userId);
+    console.log('User-Id:', this.userId);
     console.log('Wx-Nickname:', this.data.wxNickname);
     
     // Use JWT authentication
     const headers = {};
-    if (this.data.authToken) {
-      headers['Authorization'] = `Bearer ${this.data.authToken}`;
+    if (this.authToken) {
+      headers['Authorization'] = `Bearer ${this.authToken}`;
       console.log('Using JWT authentication');
     } else {
       console.error('No JWT token available. Authentication may fail.');
       // Try to get token before connecting
-      this.initializeAuth(this.data.userId, () => {
+      this.initializeAuth(this.userId, () => {
         // Retry connection with token
-        if (this.data.authToken) {
+        if (this.authToken) {
           this.setupWebSocket();
         }
       });
@@ -399,43 +452,56 @@ Page({
         return;
       }
       
+      // 【优化①】流式数据处理
       if (data.data) {
-        console.log('接收到消息片段:', data.data);
-        if (newMessages.length === 0 || newMessages[newMessages.length - 1].role !== 'assistant') {
-          // 创建新的AI消息
-          const newAiMessage = {
-            role: 'assistant',
-            content: data.data,
-            timestamp: Date.now()
-          };
-          newMessages.push(newAiMessage);
-        } else {
-          // 更新现有AI消息
-          newMessages[newMessages.length - 1].content += data.data;
+        // 如果是第一个分片，先创建一条空的AI消息占位
+        if (this._stream.targetIndex == null) {
+          const msg = { role: 'assistant', content: '', timestamp: Date.now(), suggestions: [] };
+          const idx = this.data.messages.length;
+          this.setData({ 
+            [`messages[${idx}]`]: this.formatMessages([msg])[0], 
+            isConnecting: true 
+          });
+          this._stream.targetIndex = idx;
         }
-    
-        // 每次收到消息都更新本地存储
-        wx.setStorageSync('messages', newMessages);
         
-        this.setData({
-          messages: this.formatMessages(newMessages),
-          lastMsgId: `msg-${newMessages.length - 1}`
-        });
+        // 将数据放入缓冲区
+        this._stream.buf += data.data;
 
-        // TTS will be handled when message is complete
-        // Removed per-chunk TTS to avoid fragmented audio
+        // 如果当前没有刷新计划，则安排一次（节流）
+        if (!this._stream.timer) {
+          this._stream.timer = setTimeout(() => this.flushStream(), 80); // 80ms刷新一次UI
+        }
       }
     
       if (data.done) {
-        console.log('收到done标记，消息总数:', newMessages.length);
-        // 确保最终的消息被保存
-        wx.setStorageSync('messages', newMessages);
-        this.setData({ isConnecting: false });
+        // 流结束，立即执行最后一次刷新，确保所有内容都上屏
+        if (this._stream.timer) clearTimeout(this._stream.timer);
+        this.flushStream();
+        
+        const lastIndex = this._stream.targetIndex;
+
+        // 更新最终状态和可能的建议
+        if (lastIndex != null) {
+          const updateData = { isConnecting: false };
+          if (data.suggestions && data.suggestions.length > 0) {
+            updateData[`messages[${lastIndex}].suggestions`] = data.suggestions;
+          }
+          this.setData(updateData);
+        }
+        
+        // 重置流控制器
+        this._stream.targetIndex = null;
+        
+        // 【优化：存储频率】只在结束时写入一次，并裁剪历史记录
+        wx.setStorageSync('messages', this.trimMessages(this.data.messages));
+        
         console.log('消息接收完成，isConnecting已重置为false');
         
         // Play TTS for complete AI response if in voice mode
-        if (this.data.isVoiceMode && newMessages.length > 0) {
-          const lastMessage = newMessages[newMessages.length - 1];
+        const messages = this.data.messages; // 先获取当前消息列表
+        if (this.data.isVoiceMode && messages.length > 0) {
+          const lastMessage = messages[messages.length - 1];
           if (lastMessage.role === 'assistant') {
             // 暂时禁用 TTS，因为没有 TTS 服务端点
             // this.speakAIResponse(lastMessage.content);
@@ -443,9 +509,9 @@ Page({
           }
         }
         
-        // Add final scroll after completion only if user is near bottom
-        if (!this.data.showScrollToBottom) {
-          setTimeout(() => this.scrollToBottom(), 300);
+        // 智能滚动：检查用户是否已向上滚动
+        if (!this.data.userHasScrolledUp) {
+          this.scrollToBottom();
         }
       }
     });
@@ -489,7 +555,7 @@ Page({
     });
   
     // 连接成功后再设置socketTask
-    this.setData({ socketTask });
+    this.socketTask = socketTask;
   },
 
   // 监听输入
@@ -497,67 +563,62 @@ Page({
     this.setData({ userInput: e.detail.value });
   },
 
-  // 发送消息
-  sendMessage: function () {
-    if (!this.data.userInput) {
-      wx.showToast({ title: "请输入内容", icon: "none" });
-      return;
-    }
-  
-    if (this.data.isConnecting || !this.data.socketTask) {
-      wx.showToast({ title: "正在连接服务器...", icon: "none" });
-      return;
-    }
-  
-    const userMessage = this.data.userInput; // 保存输入内容
+  // 【修正】发送逻辑
+  sendMessage: function() {
+    if (!this.data.userInput || this.data.isConnecting) return;
+
+    const userMessageContent = this.data.userInput;
     
-    this.data.socketTask.send({
-      data: JSON.stringify({ 
-        prompt: userMessage,
+    const newUserMessage = {
+      role: 'user',
+      content: userMessageContent,
+      timestamp: Date.now()
+    };
+
+    const formattedNewUserMessage = this.formatMessages([newUserMessage])[0];
+
+    this.setData({
+      messages: this.data.messages.concat(formattedNewUserMessage),
+      userInput: "",
+      isConnecting: true,
+    }, () => {
+      // 发送后立即安排滚动
+      this.scheduleAutoScroll();
+    });
+    
+    this.socketTask.send({
+      data: JSON.stringify({
+        prompt: userMessageContent,
         wxNickname: this.data.wxNickname || ''
       }),
-      success: () => {
-        const newMessages = [...this.data.messages, {
-          role: 'user',
-          content: userMessage,
-          timestamp: Date.now() // 添加时间戳
-        }];
-        this.setData({
-          messages: newMessages,
-          lastMsgId: `msg-${newMessages.length - 1}`,
-          userInput: "",
-          isConnecting: true, // 发送成功后才设置为连接中
-        });
-        console.log('消息发送成功，isConnecting设置为true');
-        wx.setStorageSync('messages', newMessages); // 保存到本地缓存
-        
-        // 添加超时机制，30秒后自动重置状态
-        setTimeout(() => {
-          if (this.data.isConnecting) {
-            console.log('响应超时，重置isConnecting状态');
-            this.setData({ isConnecting: false });
-            wx.showToast({ title: "响应超时，请重试", icon: "none" });
-          }
-        }, 30000);
-      },
       fail: () => {
         wx.showToast({ title: "发送失败", icon: "none" });
         this.setData({ isConnecting: false });
       },
     });
+
+    // 添加超时机制，30秒后自动重置状态
+    setTimeout(() => {
+      if (this.data.isConnecting) {
+        console.log('响应超时，重置isConnecting状态');
+        this.setData({ isConnecting: false });
+        wx.showToast({ title: "响应超时，请重试", icon: "none" });
+      }
+    }, 30000);
   },
 
-  // 页面卸载时关闭 WebSocket
+  // 【修正】onUnload
   onUnload: function () {
-    this.isPageUnloaded = true; // 标记页面已卸载
-    if (this.data.socketTask) {
-      this.data.socketTask.close();
-      this.setData({ socketTask: null });
+    this.isPageUnloaded = true;
+    if (this.socketTask) {
+      this.socketTask.close();
+      this.socketTask = null;
     }
-    // 清理定时器
-    if (this.scrollTimer) {
-      clearTimeout(this.scrollTimer);
-    }
+    // 清理所有定时器
+    if (this.scrollTimer) clearTimeout(this.scrollTimer);
+    if (this.scrollEventTimer) clearTimeout(this.scrollEventTimer);
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this._stream.timer) clearTimeout(this._stream.timer); // <--- 补充清理流定时器
   },
 
   // 页面隐藏时也应该停止重连
@@ -569,9 +630,9 @@ Page({
   onShow: function() {
     this.isPageHidden = false;
     this.isPageUnloaded = false;
-    if (!this.data.socketTask) {
+    if (!this.socketTask) {
       // Ensure we have valid authentication before reconnecting
-      this.initializeAuth(this.data.userId, () => {
+      this.initializeAuth(this.userId, () => {
         this.setupWebSocket();
       });
     }
@@ -620,62 +681,22 @@ Page({
         }
       }
       
-      // 如果是AI消息，处理电话号码
-      if (msg.role === 'assistant') {
-        // 匹配电话号码的正则表达式
-        const phoneRegex = /(\d{3,4}[-\s]?\d{3,4}[-\s]?\d{4}|\d{11})/g;
-        
-        // 将消息分段，分离出电话号码和普通文本
-        const segments = [];
-        let lastIndex = 0;
-        let match;
-        
-        while ((match = phoneRegex.exec(msg.content)) !== null) {
-          // 添加电话号码前的文本
-          if (match.index > lastIndex) {
-            segments.push({
-              type: 'text',
-              content: msg.content.slice(lastIndex, match.index)
-            });
-          }
-          // 添加电话号码
-          segments.push({
-            type: 'phone',
-            content: match[0],
-            number: match[0].replace(/[-\s]/g, '')
-          });
-          lastIndex = match.index + match[0].length;
-        }
-        
-        // 添加最后一段文本
-        if (lastIndex < msg.content.length) {
-          segments.push({
-            type: 'text',
-            content: msg.content.slice(lastIndex)
-          });
-        }
-        
-        newMessages.push({
-          ...msg,
-          segments,
-          formattedDate,
-          formattedTime
-        });
-      } else {
-        newMessages.push({
-          ...msg,
-          formattedDate,
-          formattedTime,
-        });
-      }
+      // 【关键简化】不再处理segments，直接返回消息
+      newMessages.push({
+        ...msg,
+        formattedDate,
+        formattedTime,
+      });
       
       lastMessageTimestamp = currentTimestamp;
     });
     return newMessages;
   },
 
+
   handleFocus: function() {
-    this.scrollToBottom();
+    // 点击输入框时强制滚动到底部
+    this.scrollToBottom(true);
   },
 
   switchToVoice: function() {
@@ -686,23 +707,13 @@ Page({
     this.setData({ isVoiceMode: false });
   },
 
+  // 【修正】录音逻辑
   startRecording: function() {
-    // Request recording permission first
     wx.authorize({
       scope: 'scope.record',
       success: () => {
-        const recorderManager = wx.getRecorderManager();
-        
-        recorderManager.onStart(() => {
-          this.setData({ isRecording: true });
-          wx.showToast({
-            title: '正在录音...',
-            icon: 'none',
-            duration: 60000
-          });
-        });
-
-        recorderManager.start({
+        // 不再注册监听，直接启动
+        this.recorderManager.start({
           duration: 60000,
           sampleRate: 16000,
           numberOfChannels: 1,
@@ -726,18 +737,8 @@ Page({
 
   stopRecording: function() {
     if (!this.data.isRecording) return;
-    
-    const recorderManager = wx.getRecorderManager();
-    
-    recorderManager.onStop((res) => {
-      wx.hideToast();
-      this.setData({ isRecording: false });
-      
-      // Upload audio file and get text
-      this.uploadVoice(res.tempFilePath);
-    });
-
-    recorderManager.stop();
+    // 直接停止
+    this.recorderManager.stop();
   },
 
   cancelRecording: function(e) {
@@ -769,23 +770,27 @@ Page({
     });
   },
 
+  // 【修正】sendVoiceMessage 函数
   sendVoiceMessage: function(text) {
-    // Send the recognized text as a message
-    const newMessage = {
+    const newUserMessage = {
       role: 'user',
       content: text,
       timestamp: Date.now()
     };
-    
-    const newMessages = [...this.data.messages, newMessage];
+
+    // 只格式化单条新消息
+    const formattedNewUserMessage = this.formatMessages([newUserMessage])[0];
+
+    // 使用 concat 增量更新
     this.setData({
-      messages: this.formatMessages(newMessages),
-      lastMsgId: `msg-${newMessages.length - 1}`
+      messages: this.data.messages.concat(formattedNewUserMessage)
+    }, () => {
+      // 立即调度滚动
+      this.scheduleAutoScroll();
     });
     
-    // Send to websocket
-    if (this.data.socketTask) {
-      this.data.socketTask.send({
+    if (this.socketTask) {
+      this.socketTask.send({
         data: JSON.stringify({ 
           prompt: text,
           wxNickname: this.data.wxNickname || ''
@@ -856,25 +861,41 @@ Page({
     }
   },
 
-  // 滚动事件处理
+  // 滚动事件处理 - 智能滚动核心逻辑（节流优化）
   onScroll: function(e) {
-    // 获取当前滚动位置和容器高度
-    const scrollTop = e.detail.scrollTop;
-    const scrollHeight = e.detail.scrollHeight;
+    // 节流处理：减少滚动事件的处理频率
+    if (this.scrollEventTimer) {
+      return; // 如果上一次事件还在处理中，跳过这次事件
+    }
     
-    // 使用新的API获取窗口信息
-    const windowInfo = wx.getWindowInfo();
-    const clientHeight = windowInfo.windowHeight - 100; // 减去输入框等其他元素的高度
-    
-    // 判断是否滚动到距离底部超过一定距离
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    
-    // 只有当距离底部超过150px时才显示按钮
-    if (distanceFromBottom > 150) {
+    this.scrollEventTimer = setTimeout(() => {
+      this.scrollEventTimer = null;
+    }, 50); // 50ms内最多处理一次滚动事件
+
+    const { scrollTop, scrollHeight } = e.detail;
+    const chatViewHeight = this.data.chatHistoryHeight || 700; // 使用 onReady 中获取的高度，提供一个备用值
+
+    // 定义一个阈值，比如距离底部100px以内都算作"在底部"
+    const atBottomThreshold = 100;
+    const isAtBottom = scrollHeight - scrollTop - chatViewHeight < atBottomThreshold;
+
+    // 如果用户当前不在底部
+    if (!isAtBottom) {
+      // 并且之前的状态是"在底部"，那么说明是用户刚刚向上滚动
+      if (!this.data.userHasScrolledUp) {
+        this.setData({ userHasScrolledUp: true });
+      }
+      // 向上滚动超过一定距离后，显示"回到底部"按钮
       if (!this.data.showScrollToBottom) {
         this.setData({ showScrollToBottom: true });
       }
     } else {
+      // 如果用户当前在底部
+      // 并且之前的状态是"已向上滚动"，那么说明是用户自己滚回来了
+      if (this.data.userHasScrolledUp) {
+        this.setData({ userHasScrolledUp: false });
+      }
+      // 在底部时，隐藏"回到底部"按钮
       if (this.data.showScrollToBottom) {
         this.setData({ showScrollToBottom: false });
       }
@@ -888,8 +909,8 @@ Page({
       .select('.chat-history')
       .boundingClientRect(rect => {
         if (rect) {
-          this.chatHistoryHeight = rect.height;
-          console.log("聊天区域高度:", this.chatHistoryHeight);
+          this.setData({ chatHistoryHeight: rect.height });
+          console.log("聊天区域高度:", rect.height);
         }
       }).exec();
   }

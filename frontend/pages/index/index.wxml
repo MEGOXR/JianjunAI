@@ -9,14 +9,13 @@
     scroll-y 
     class="chat-history" 
     scroll-with-animation
-    scroll-into-view="{{lastMsgId}}"
-    scroll-top="{{scrollTop}}"
+    scroll-into-view="{{scrollIntoView}}"
     enhanced="{{true}}"
     show-scrollbar="{{false}}"
     bounces="{{false}}"
     bindscroll="onScroll"
   >
-    <block wx:for="{{messages}}" wx:key="index">
+    <block wx:for="{{messages}}" wx:key="timestamp">
       <!-- 日期和时间显示 -->
       <view wx:if="{{item.formattedDate}}" class="date-label">{{item.formattedDate}}</view>
       
@@ -30,16 +29,15 @@
       <!-- AI 消息 -->
       <view class="message-item" id="msg-{{index}}" wx:if="{{item.role === 'assistant'}}">
         <view class="ai-message">
-          <block wx:if="{{item.segments}}">
-            <text wx:for="{{item.segments}}" wx:key="index" wx:for-item="segment" user-select="true">
-              <text wx:if="{{segment.type === 'text'}}">{{segment.content}}</text>
-              <text wx:else class="phone-number" bindtap="handleLinkTap" data-phone="{{segment.number}}">{{segment.content}}</text>
-            </text>
-          </block>
-          <text wx:else user-select="true">{{item.content}}</text>
+          <!-- 【关键简化】直接渲染 content，不再需要 segments 和 if/else 判断 -->
+          <text user-select="true">{{item.content}}</text>
         </view>
       </view>
     </block>
+    
+    <!-- 【关键新增】在所有消息循环的下方，添加一个永久的底部锚点 -->
+    <view id="chat-bottom-anchor"></view>
+    
   </scroll-view>
 
   <!-- 输入区域 -->
@@ -77,7 +75,7 @@
   </view>
 
   <!-- 当用户滚动时显示的"回到底部"按钮 -->
-  <view class="scroll-to-bottom" bindtap="scrollToBottom" wx:if="{{showScrollToBottom}}">
+  <view class="scroll-to-bottom" bindtap="forceScrollToBottom" wx:if="{{showScrollToBottom}}">
     <image src="/images/arrow-down.png" class="arrow-down-icon"></image>
   </view>
 </view>
