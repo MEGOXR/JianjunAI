@@ -70,19 +70,19 @@
   border-radius: 24rpx 24rpx 0 24rpx;
   max-width: 80%;
   word-wrap: break-word;
-  margin-right: 12rpx; /* 统一右侧边距 */
+  margin-right: 22rpx; /* 统一右侧边距，增加5px(约10rpx) */
 }
 
 .ai-message {
-  align-self: flex-start;
+  align-self: stretch; /* 占据容器全宽 */
   background-color: white;
   color: #333;
   padding: 24rpx 32rpx;
   border-radius: 24rpx 24rpx 24rpx 0;
-  max-width: 80%;
   word-wrap: break-word;
   box-shadow: 0 2rpx 4rpx rgba(0,0,0,0.1);
-  margin-left: 12rpx; /* 统一左侧边距 */
+  margin-left: 22rpx; /* 统一左侧边距，增加5px(约10rpx) */
+  margin-right: 22rpx; /* 与用户消息右边界对齐，增加5px(约10rpx) */
 }
 
 .input-area {
