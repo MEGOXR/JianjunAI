@@ -3,6 +3,7 @@ const userDataService = require('../services/userDataService');
 const greetingService = require('../services/greetingService');
 const nameExtractorService = require('../services/nameExtractorService');
 const promptService = require('../services/promptService');
+const ErrorHandler = require('../middleware/errorHandler');
 
 // 环境变量读取辅助函数（处理 Azure App Service 的 APPSETTING_ 前缀）
 function getEnvVar(name) {
@@ -30,22 +31,39 @@ function validateAzureConfig() {
 // 使用 userId 作为 key 来存储对话历史
 const chatHistories = new Map();
 
-// 内存管理配置
-const MAX_HISTORY_SIZE = 1000;
-const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1小时
-const MAX_IDLE_TIME = 24 * 60 * 60 * 1000; // 24小时
+// 内存管理配置 - 更加保守的设置
+const MAX_HISTORY_SIZE = 100; // 减少到100个用户
+const CLEANUP_INTERVAL = 15 * 60 * 1000; // 15分钟清理一次
+const MAX_IDLE_TIME = 2 * 60 * 60 * 1000; // 2小时空闲时间
+const MAX_MESSAGES_PER_USER = 20; // 每个用户最多保存20条消息
 
-// 定期清理不活跃的聊天历史
+// 增强的清理功能
 function cleanupChatHistories() {
   const now = Date.now();
   let cleanedCount = 0;
+  let memoryFreed = 0;
+  
+  // 记录清理前的内存使用
+  const usedBefore = process.memoryUsage();
   
   for (const [userId, history] of chatHistories.entries()) {
     // 检查最后访问时间
     const lastAccess = history.lastAccess || 0;
     if (now - lastAccess > MAX_IDLE_TIME) {
+      // 估算释放的内存
+      const memorySize = JSON.stringify(history).length;
+      memoryFreed += memorySize;
+      
       chatHistories.delete(userId);
       cleanedCount++;
+      continue;
+    }
+    
+    // 限制每个用户的消息数量
+    if (history.messages && history.messages.length > MAX_MESSAGES_PER_USER) {
+      const removedMessages = history.messages.splice(0, history.messages.length - MAX_MESSAGES_PER_USER);
+      memoryFreed += JSON.stringify(removedMessages).length;
+      console.log(`Trimmed ${removedMessages.length} old messages for user ${userId}`);
     }
   }
   
@@ -55,19 +73,67 @@ function cleanupChatHistories() {
       .sort((a, b) => (a[1].lastAccess || 0) - (b[1].lastAccess || 0));
     
     const toRemove = sortedEntries.slice(0, chatHistories.size - MAX_HISTORY_SIZE);
-    toRemove.forEach(([userId]) => {
+    toRemove.forEach(([userId, history]) => {
+      memoryFreed += JSON.stringify(history).length;
       chatHistories.delete(userId);
       cleanedCount++;
     });
   }
   
-  if (cleanedCount > 0) {
-    console.log(`Cleaned up ${cleanedCount} inactive chat histories. Current size: ${chatHistories.size}`);
+  // 强制垃圾回收（如果可用）
+  if (global.gc) {
+    global.gc();
+  }
+  
+  const usedAfter = process.memoryUsage();
+  const heapFreed = usedBefore.heapUsed - usedAfter.heapUsed;
+  
+  if (cleanedCount > 0 || memoryFreed > 0) {
+    console.log(`Memory cleanup: removed ${cleanedCount} histories, freed ~${Math.round(memoryFreed/1024)}KB data, heap change: ${Math.round(heapFreed/1024)}KB. Current size: ${chatHistories.size}`);
+  }
+  
+  // 检查内存压力
+  const memUsage = process.memoryUsage();
+  const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
+  if (heapUsedMB > 100) { // 如果堆内存超过100MB
+    console.warn(`High memory usage detected: ${heapUsedMB}MB heap used`);
+    // 更激进的清理
+    const aggressiveCleanup = Math.floor(chatHistories.size * 0.3); // 清理30%
+    if (aggressiveCleanup > 0) {
+      const entriesToRemove = [...chatHistories.entries()]
+        .sort((a, b) => (a[1].lastAccess || 0) - (b[1].lastAccess || 0))
+        .slice(0, aggressiveCleanup);
+      
+      entriesToRemove.forEach(([userId]) => chatHistories.delete(userId));
+      console.log(`Aggressive cleanup: removed ${aggressiveCleanup} additional histories`);
+    }
   }
 }
 
 // 启动定期清理
-setInterval(cleanupChatHistories, CLEANUP_INTERVAL);
+const cleanupTimer = setInterval(cleanupChatHistories, CLEANUP_INTERVAL);
+
+// 监控内存使用情况
+function logMemoryUsage() {
+  const usage = process.memoryUsage();
+  console.log('Memory usage:', {
+    rss: Math.round(usage.rss / 1024 / 1024) + 'MB',
+    heapTotal: Math.round(usage.heapTotal / 1024 / 1024) + 'MB', 
+    heapUsed: Math.round(usage.heapUsed / 1024 / 1024) + 'MB',
+    external: Math.round(usage.external / 1024 / 1024) + 'MB',
+    chatHistories: chatHistories.size
+  });
+}
+
+// 每小时记录一次内存使用
+const memoryTimer = setInterval(logMemoryUsage, 60 * 60 * 1000);
+
+// 优雅关闭
+process.on('SIGTERM', () => {
+  clearInterval(cleanupTimer);
+  clearInterval(memoryTimer);
+  chatHistories.clear();
+});
 
 // 生成或获取用户ID
 const getUserId = (ws) => {
@@ -259,9 +325,14 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
     
     history.push({ role: "assistant", content: cleanedResponse });
 
-    // 恢复为原来的历史记录长度限制
-    if (history.length > 10) {
-      history.splice(1, 2);
+    // 智能历史记录管理 - 保持最近的对话但限制总长度
+    if (history.length > MAX_MESSAGES_PER_USER) {
+      // 保留系统消息和最近的对话
+      const systemMessage = history[0]; // 系统提示
+      const recentMessages = history.slice(-MAX_MESSAGES_PER_USER + 1);
+      history.length = 0; // 清空数组
+      history.push(systemMessage, ...recentMessages);
+      console.log(`Trimmed history to ${history.length} messages for user ${userId}`);
     }
     
     // 保存聊天历史到持久化存储
@@ -288,11 +359,7 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
     console.log('done标记发送完成');
   } catch (error) {
     console.error("Azure OpenAI 调用出错:", error);
-    console.error("错误详情:", {
-      message: error.message,
-      stack: error.stack,
-      response: error.response?.data
-    });
+    ErrorHandler.handleWebSocketError(ws, error, 'Azure OpenAI Chat');
     
     // 检查是否是内容过滤错误
     if (error.code === 'content_filter' || error.message?.includes('content management policy')) {
@@ -308,20 +375,33 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
         await new Promise(resolve => setTimeout(resolve, 20));
       }
       ws.send(JSON.stringify({ done: true }));
-    } else {
-      // 其他错误的通用处理
-      ws.send(JSON.stringify({ error: "服务器内部错误", details: error.message }));
     }
   }
 };
 
 
-// 修改断开连接的处理方法
+// 增强的断开连接处理
 exports.handleDisconnect = (ws) => {
-  // 不再删除历史记录，只清理 ws 相关资源
+  const userId = ws.userId;
+  
+  // 清理 WebSocket 相关资源
   if (ws.readyState === ws.OPEN) {
     ws.close();
   }
+  
+  // 更新最后访问时间但不删除历史记录
+  if (userId && chatHistories.has(userId)) {
+    const historyData = chatHistories.get(userId);
+    if (historyData && typeof historyData === 'object') {
+      historyData.lastAccess = Date.now();
+    }
+  }
+  
+  // 清理 WebSocket 对象上的用户数据
+  delete ws.userId;
+  delete ws.wxNickname;
+  
+  console.log(`WebSocket disconnected for user: ${userId || 'unknown'}`);
 };
 
 // 新增：处理用户连接时的初始化
@@ -356,19 +436,7 @@ exports.handleConnection = async (ws, wxNickname) => {
     return userId;
   } catch (error) {
     console.error('handleConnection 出错:', error);
-    console.error('错误堆栈:', error.stack);
-    
-    // 发送错误信息给客户端
-    try {
-      ws.send(JSON.stringify({
-        type: 'error',
-        data: '连接初始化失败',
-        error: error.message
-      }));
-    } catch (sendError) {
-      console.error('发送错误消息失败:', sendError);
-    }
-    
+    ErrorHandler.handleWebSocketError(ws, error, 'Connection Initialization');
     throw error; // 重新抛出错误
   }
 };

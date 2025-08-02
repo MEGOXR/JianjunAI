@@ -22,10 +22,6 @@ Page({
       wx.setStorageSync('userId', userId);
     }
     
-    // 临时清理本地存储（用于调试）
-    console.log('清理本地消息存储');
-    wx.removeStorageSync('messages');
-    
     // 恢复聊天记录
     const savedMessages = wx.getStorageSync('messages') || [];
     
@@ -34,14 +30,16 @@ Page({
       messages: this.formatMessages(savedMessages)
     });
     
-    // 检查是否已有用户信息，没有则尝试获取
-    this.checkAndGetUserInfo();
-    
-    // Setup WebSocket connection
-    this.setupWebSocket();
+    // 先检查用户信息，然后再初始化认证和WebSocket
+    this.checkAndGetUserInfo(() => {
+      // 在获取用户信息后再进行认证
+      this.initializeAuth(userId);
+      // Setup WebSocket connection
+      this.setupWebSocket();
+    });
   },
   
-  checkAndGetUserInfo: function() {
+  checkAndGetUserInfo: function(callback) {
     // 先检查本地是否已保存用户信息
     const savedUserInfo = wx.getStorageSync('userInfo');
     if (savedUserInfo && savedUserInfo.nickName) {
@@ -50,10 +48,17 @@ Page({
         wxAvatarUrl: savedUserInfo.avatarUrl
       });
       console.log('已使用保存的用户信息:', savedUserInfo.nickName);
+      if (callback) callback();
       return;
     }
     
-    // 如果没有保存的信息，静默尝试获取
+    // 如果没有保存的信息，设置默认值并执行回调
+    this.setData({
+      wxNickname: '微信用户'
+    });
+    if (callback) callback();
+    
+    // 异步尝试获取用户信息
     this.getUserInfo();
   },
 
@@ -126,6 +131,55 @@ Page({
   }
   */
 
+  // Get JWT token for authentication
+  initializeAuth: function(userId) {
+    const storedToken = wx.getStorageSync('authToken');
+    const tokenExpiry = wx.getStorageSync('tokenExpiry');
+    
+    // Check if token exists and is still valid
+    if (storedToken && tokenExpiry && new Date(tokenExpiry) > new Date()) {
+      this.setData({ authToken: storedToken });
+      console.log('Using existing JWT token');
+    } else {
+      // Get new token
+      this.getAuthToken(userId);
+    }
+  },
+  
+  getAuthToken: function(userId) {
+    const baseUrl = getApp().globalData.baseUrl;
+    wx.request({
+      url: `${baseUrl}/auth/token`,
+      method: 'POST',
+      header: {
+        'content-type': 'application/json'
+      },
+      data: {
+        userId: userId,
+        wxNickname: this.data.wxNickname || ''
+      },
+      success: (res) => {
+        if (res.data.token) {
+          // Store token and expiry time
+          wx.setStorageSync('authToken', res.data.token);
+          // Set expiry to 23 hours from now (1 hour before actual expiry)
+          const expiryTime = new Date(Date.now() + 23 * 60 * 60 * 1000);
+          wx.setStorageSync('tokenExpiry', expiryTime.toISOString());
+          
+          this.setData({ authToken: res.data.token });
+          console.log('JWT token obtained successfully');
+        }
+      },
+      fail: (error) => {
+        console.error('Failed to get auth token:', error);
+        wx.showToast({
+          title: '认证失败，请重试',
+          icon: 'none'
+        });
+      }
+    });
+  },
+  
   // Rest of your existing methods...
 
   scrollToBottom: function() {
@@ -162,12 +216,23 @@ Page({
     console.log('User-Id:', this.data.userId);
     console.log('Wx-Nickname:', this.data.wxNickname);
     
+    // Use JWT authentication if available, fallback to legacy headers
+    const headers = {};
+    if (this.data.authToken) {
+      headers['Authorization'] = `Bearer ${this.data.authToken}`;
+    } else {
+      // Fallback for backward compatibility
+      headers['user-id'] = this.data.userId;
+      headers['wx-nickname'] = encodeURIComponent(this.data.wxNickname || '');
+      // 只在开发环境显示警告
+      if (wsUrl.includes('localhost')) {
+        console.warn('Using legacy authentication. Please update to JWT.');
+      }
+    }
+    
     const socketTask = wx.connectSocket({
       url: wsUrl,
-      header: { 
-        "user-id": this.data.userId,
-        "wx-nickname": encodeURIComponent(this.data.wxNickname || '')
-      },
+      header: headers,
     });
   
     let reconnectCount = 0; // 重连计数
@@ -252,7 +317,7 @@ Page({
             timestamp: Date.now(),
             isGreeting: true
           };
-          newMessages.unshift(greetingMessage);
+          newMessages.push(greetingMessage);
           console.log('添加问候消息后，消息数量:', newMessages.length);
           
           const formattedMessages = this.formatMessages(newMessages);
@@ -275,6 +340,23 @@ Page({
       // 处理初始化消息
       if (data.type === 'init') {
         console.log('收到init消息，忽略');
+        return;
+      }
+      
+      // 处理心跳消息
+      if (data.type === 'ping') {
+        console.log('收到服务器ping，发送pong响应');
+        socketTask.send({
+          data: JSON.stringify({
+            type: 'pong',
+            timestamp: Date.now()
+          })
+        });
+        return;
+      }
+      
+      if (data.type === 'pong') {
+        console.log('收到服务器pong响应');
         return;
       }
       

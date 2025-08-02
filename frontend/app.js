@@ -1,9 +1,11 @@
 App({
   globalData: {
     // 生产环境
-    wsBaseUrl: "wss://mego-xr.com/api/",
+    // wsBaseUrl: "wss://mego-xr.com/api/",
+    // baseUrl: "https://mego-xr.com/api",
     // 本地测试环境
-    // wsBaseUrl: "ws://localhost:3000",
+    wsBaseUrl: "ws://localhost:3000",
+    baseUrl: "http://localhost:3000",
     messagesLoaded: false
   },
   onLaunch: function () {
