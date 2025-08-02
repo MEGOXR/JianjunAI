@@ -180,13 +180,9 @@ class PromptService {
     return cleaned;
   }
 
-  // 转换数字为中文序号
+  // 转换数字为阿拉伯数字序号
   getChineseNumber(num) {
-    const numbers = ['', '①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'];
     const n = parseInt(num);
-    if (n >= 1 && n <= 10) {
-      return numbers[n];
-    }
     return `${n}.`;
   }
 }

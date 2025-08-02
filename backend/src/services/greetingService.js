@@ -18,13 +18,27 @@ class GreetingService {
     const extractedName = userData?.userInfo?.extractedName;
     const name = extractedName || wxNickname;
     
-    // 首次访问
+    console.log('检查问候语条件:', {
+      hasUserData: !!userData,
+      chatHistoryLength: chatHistory.length,
+      lastVisit: userData?.lastVisit,
+      createdAt: userData?.createdAt
+    });
+    
+    // 检查是否需要发送问候语（基于时间判断）
+    if (!this.shouldSendGreeting(userData)) {
+      return null; // 24小时内返回的用户不发送问候语
+    }
+    
+    // 首次访问（没有用户数据或没有聊天记录）
     if (!userData || chatHistory.length === 0) {
+      console.log('识别为首次访问用户，生成首次问候语');
       const template = promptService.getGreetingTemplate('firstTime', !!name);
       return promptService.formatGreeting(template, { name: name || '' });
     }
     
     // 老用户返回 - 使用AI总结话题
+    console.log('识别为返回用户，生成返回问候语');
     const template = promptService.getGreetingTemplate('returning', !!name);
     const lastTopic = await this.summarizeConversationTopic(chatHistory);
     const variables = {
@@ -33,6 +47,35 @@ class GreetingService {
     };
     
     return promptService.formatGreeting(template, variables);
+  }
+
+  /**
+   * 判断是否应该发送问候语
+   * 规则：如果用户在24小时内访问过，则不发送问候语
+   */
+  shouldSendGreeting(userData) {
+    if (!userData) {
+      // 没有用户数据，应该发送问候语（真正的首次访问）
+      console.log('没有用户数据，发送问候语');
+      return true;
+    }
+    
+    if (!userData.lastVisit) {
+      // 有用户数据但没有访问记录，说明是新创建的用户，发送问候语
+      console.log('新用户没有访问记录，发送问候语');
+      return true;
+    }
+    
+    const now = new Date();
+    const lastVisit = new Date(userData.lastVisit);
+    const hoursSinceLastVisit = (now - lastVisit) / (1000 * 60 * 60);
+    
+    // 如果距离上次访问超过24小时，发送问候语
+    const shouldSend = hoursSinceLastVisit >= 24;
+    
+    console.log(`用户上次访问时间: ${lastVisit.toISOString()}, 距今${hoursSinceLastVisit.toFixed(1)}小时, ${shouldSend ? '需要' : '不需要'}发送问候语`);
+    
+    return shouldSend;
   }
 
   // 使用AI总结对话话题

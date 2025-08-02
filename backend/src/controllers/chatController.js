@@ -412,26 +412,31 @@ exports.handleConnection = async (ws, wxNickname) => {
     const userId = getUserId(ws);
     console.log('获取用户ID:', userId);
     
-    const userData = await userDataService.getUserData(userId);
+    let userData = await userDataService.getUserData(userId);
     console.log('获取用户数据成功');
     
-    // 生成智能问候语
+    // 生成智能问候语（基于时间判断是否需要）
+    // 在更新用户信息之前检查是否需要问候语
     const greeting = await greetingService.generateGreeting(userData, wxNickname);
-    console.log('生成问候语成功:', greeting.substring(0, 50) + '...');
     
-    // 更新用户最后访问时间
+    // 更新用户最后访问时间（在问候语生成之后）
     if (wxNickname) {
       await userDataService.updateUserInfo(userId, { wxNickname });
       console.log('更新用户信息成功');
     }
     
-    // 发送问候消息
-    ws.send(JSON.stringify({
-      type: 'greeting',
-      data: greeting,
-      userId: userId
-    }));
-    console.log('问候消息发送成功');
+    // 仅在需要时发送问候消息
+    if (greeting) {
+      console.log('生成问候语成功:', greeting.substring(0, 50) + '...');
+      ws.send(JSON.stringify({
+        type: 'greeting',
+        data: greeting,
+        userId: userId
+      }));
+      console.log('问候消息发送成功');
+    } else {
+      console.log('用户24小时内访问过，跳过问候消息');
+    }
     
     return userId;
   } catch (error) {
