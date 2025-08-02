@@ -17,9 +17,26 @@ Page({
   onLoad: function() {
     // Get user ID from storage or generate new one
     let userId = wx.getStorageSync('userId');
-    if (!userId) {
-      userId = `user_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    
+    // Validate existing user ID format
+    const isValidUserId = (id) => {
+      return id && typeof id === 'string' && /^user_[a-zA-Z0-9]{10,25}$/.test(id);
+    };
+    
+    if (!userId || !isValidUserId(userId)) {
+      // Clear invalid user ID and generate new one
+      if (userId && !isValidUserId(userId)) {
+        console.log('Clearing invalid user ID:', userId);
+        wx.removeStorageSync('userId');
+      }
+      
+      // Generate user ID in the format expected by security middleware: user_[a-zA-Z0-9]{10,30}
+      // Use shorter timestamp and random string to ensure total length is within limits
+      const timestamp = Date.now().toString(36).substring(-6); // Last 6 chars of timestamp in base36
+      const random = Math.random().toString(36).substring(2, 10); // 8 chars random
+      userId = `user_${timestamp}${random}`; // user_ (5) + timestamp (6) + random (8) = 19 chars total
       wx.setStorageSync('userId', userId);
+      console.log('Generated new user ID:', userId);
     }
     
     // 恢复聊天记录
@@ -32,10 +49,11 @@ Page({
     
     // 先检查用户信息，然后再初始化认证和WebSocket
     this.checkAndGetUserInfo(() => {
-      // 在获取用户信息后再进行认证
-      this.initializeAuth(userId);
-      // Setup WebSocket connection
-      this.setupWebSocket();
+      // 在获取用户信息后再进行认证，认证完成后再建立WebSocket连接
+      this.initializeAuth(userId, () => {
+        // Setup WebSocket connection only after authentication is complete
+        this.setupWebSocket();
+      });
     });
   },
   
@@ -132,7 +150,7 @@ Page({
   */
 
   // Get JWT token for authentication
-  initializeAuth: function(userId) {
+  initializeAuth: function(userId, callback) {
     const storedToken = wx.getStorageSync('authToken');
     const tokenExpiry = wx.getStorageSync('tokenExpiry');
     
@@ -140,13 +158,14 @@ Page({
     if (storedToken && tokenExpiry && new Date(tokenExpiry) > new Date()) {
       this.setData({ authToken: storedToken });
       console.log('Using existing JWT token');
+      if (callback) callback();
     } else {
       // Get new token
-      this.getAuthToken(userId);
+      this.getAuthToken(userId, callback);
     }
   },
   
-  getAuthToken: function(userId) {
+  getAuthToken: function(userId, callback) {
     const baseUrl = getApp().globalData.baseUrl;
     wx.request({
       url: `${baseUrl}/auth/token`,
@@ -168,6 +187,10 @@ Page({
           
           this.setData({ authToken: res.data.token });
           console.log('JWT token obtained successfully');
+          if (callback) callback();
+        } else {
+          console.error('No token received from server');
+          if (callback) callback(); // Continue even without token for fallback
         }
       },
       fail: (error) => {
@@ -176,6 +199,7 @@ Page({
           title: '认证失败，请重试',
           icon: 'none'
         });
+        if (callback) callback(); // Continue even with error for fallback
       }
     });
   },
@@ -216,18 +240,21 @@ Page({
     console.log('User-Id:', this.data.userId);
     console.log('Wx-Nickname:', this.data.wxNickname);
     
-    // Use JWT authentication if available, fallback to legacy headers
+    // Use JWT authentication
     const headers = {};
     if (this.data.authToken) {
       headers['Authorization'] = `Bearer ${this.data.authToken}`;
+      console.log('Using JWT authentication');
     } else {
-      // Fallback for backward compatibility
-      headers['user-id'] = this.data.userId;
-      headers['wx-nickname'] = encodeURIComponent(this.data.wxNickname || '');
-      // 只在开发环境显示警告
-      if (wsUrl.includes('localhost')) {
-        console.warn('Using legacy authentication. Please update to JWT.');
-      }
+      console.error('No JWT token available. Authentication may fail.');
+      // Try to get token before connecting
+      this.initializeAuth(this.data.userId, () => {
+        // Retry connection with token
+        if (this.data.authToken) {
+          this.setupWebSocket();
+        }
+      });
+      return;
     }
     
     const socketTask = wx.connectSocket({
@@ -543,7 +570,10 @@ Page({
     this.isPageHidden = false;
     this.isPageUnloaded = false;
     if (!this.data.socketTask) {
-      this.setupWebSocket();
+      // Ensure we have valid authentication before reconnecting
+      this.initializeAuth(this.data.userId, () => {
+        this.setupWebSocket();
+      });
     }
     this.scrollToBottom();
   },

@@ -163,8 +163,8 @@ wss.on('connection', async (ws, req) => {
   
   // 使用JWT认证
   if (!AuthMiddleware.authenticateWebSocket(ws, req)) {
-    console.warn('WebSocket authentication failed');
-    ws.close(1008, 'Authentication required');
+    console.warn('WebSocket authentication failed - closing connection');
+    ws.close(1008, 'JWT authentication required');
     return;
   }
   

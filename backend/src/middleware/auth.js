@@ -48,7 +48,7 @@ class AuthMiddleware {
    * WebSocket authentication
    */
   static authenticateWebSocket(ws, req) {
-    // Try to get token from authorization header
+    // Get token from authorization header
     const authHeader = req.headers['authorization'];
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
@@ -57,20 +57,13 @@ class AuthMiddleware {
       if (decoded) {
         ws.userId = decoded.userId;
         ws.wxNickname = decoded.wxNickname;
+        console.log(`JWT authentication successful for user: ${decoded.userId}`);
         return true;
+      } else {
+        console.warn('JWT token verification failed');
       }
-    }
-
-    // Fallback to header-based auth (for backward compatibility)
-    // This should be removed in production
-    const userId = req.headers['user-id'];
-    const wxNickname = req.headers['wx-nickname'];
-    
-    if (userId && wxNickname) {
-      console.warn('Using legacy header authentication. Please upgrade to JWT.');
-      ws.userId = userId;
-      ws.wxNickname = decodeURIComponent(wxNickname);
-      return true;
+    } else {
+      console.warn('No Bearer token provided in WebSocket connection');
     }
 
     return false;
