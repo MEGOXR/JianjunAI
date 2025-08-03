@@ -303,7 +303,6 @@ Page({
             智能暂停: this.hasSmartPaused
           });
         }
-        }
       });
     }
     this._stream.timer = null;
