@@ -18,6 +18,8 @@ Page({
     this.userId = null;
     this.socketTask = null;
     this.authToken = null;
+    this.hasSmartPaused = false; // 【新增】标记是否已经智能暂停
+    this.userIsTouching = false; // 【新增】用户是否正在触摸屏幕
     
     // 定时器句柄
     this.reconnectTimer = null;
@@ -42,6 +44,9 @@ Page({
       this.setData({ isRecording: false });
       this.uploadVoice(res.tempFilePath);
     });
+    
+    // 【新增】监听键盘高度变化
+    wx.onKeyboardHeightChange(this.handleKeyboardHeightChange);
     // ---- End: 非UI数据 ----
 
     // 【优化：userId Bug修复】
@@ -224,21 +229,83 @@ Page({
   flushStream: function() {
     if (this._stream.buf && this._stream.targetIndex != null) {
       const idx = this._stream.targetIndex;
-      // 拼接缓冲区内容到已有内容
       const mergedContent = this.data.messages[idx].content + this._stream.buf;
-      // 清空缓冲区
       this._stream.buf = '';
       
       this.setData({
         [`messages[${idx}].content`]: mergedContent
       }, () => {
-        // 流式消息更新时也确保滚动到底部
-        if (!this.data.userHasScrolledUp) {
-          this.scheduleAutoScroll();
+        // 【智能滚动】检查是否应该暂停自动滚动
+        console.log('🔍 flushStream检查状态:', {
+          用户上滑: this.data.userHasScrolledUp,
+          智能暂停: this.hasSmartPaused,
+          内容长度: this.data.messages[idx].content.length
+        });
+        
+        if (!this.data.userHasScrolledUp && !this.hasSmartPaused) {
+          const msgContent = this.data.messages[idx].content;
+          
+          // 简单条件：当AI回复超过200字符时，检查是否需要暂停
+          if (msgContent.length > 200) {
+            // 使用DOM查询检查AI消息高度是否超过视口的80%
+            wx.createSelectorQuery()
+              .select('.chat-history').boundingClientRect()
+              .select(`#msg-${idx}`).boundingClientRect()
+              .exec(res => {
+                if (res && res[0] && res[1]) {
+                  const scrollRect = res[0];
+                  const msgRect = res[1];
+                  
+                  // 获取AI消息的高度和视口高度
+                  const msgHeight = msgRect.height;
+                  const viewportHeight = scrollRect.height;
+                  
+                  // 计算消息底部相对于视口的位置
+                  const msgBottomRelativeToView = msgRect.bottom - scrollRect.top;
+                  
+                  // 当AI消息高度达到视口高度，且消息底部接近视口底部时暂停
+                  // 增加缓冲距离到150px，确保顶部内容不会被滚出视口
+                  if (msgHeight >= viewportHeight && msgBottomRelativeToView >= viewportHeight - 150) {
+                    console.log('🚫 智能暂停触发！', {
+                      AI消息高度: msgHeight + 'px',
+                      视口高度: viewportHeight + 'px',
+                      消息占比: (msgHeight / viewportHeight * 100).toFixed(1) + '%',
+                      消息底部位置: msgBottomRelativeToView + 'px',
+                      已滚动到位: msgBottomRelativeToView >= viewportHeight - 150
+                    });
+                    this.hasSmartPaused = true; // 标记已暂停
+                    this.setData({ showScrollToBottom: true });
+                    return; // 暂停滚动
+                  }
+                }
+                
+                // 否则继续自动滚动
+                console.log('⬇️ 继续自动滚动 (内容长度: ' + msgContent.length + ')');
+                this.setData({ scrollIntoView: '' }, () => {
+                  wx.nextTick(() => {
+                    this.setData({ scrollIntoView: 'chat-bottom-anchor' });
+                  });
+                });
+              });
+          } else {
+            // 内容还不够长，直接滚动
+            console.log('⬇️ 内容较短，直接滚动 (内容长度: ' + msgContent.length + ')');
+            this.setData({ scrollIntoView: '' }, () => {
+              wx.nextTick(() => {
+                this.setData({ scrollIntoView: 'chat-bottom-anchor' });
+              });
+            });
+          }
+        } else {
+          // 状态不允许滚动
+          console.log('⏹️ 停止滚动 - 状态:', {
+            用户上滑: this.data.userHasScrolledUp,
+            智能暂停: this.hasSmartPaused
+          });
+        }
         }
       });
     }
-    // 清除定时器句柄
     this._stream.timer = null;
   },
 
@@ -249,22 +316,22 @@ Page({
     return list.slice(-limit);
   },
 
-  // 【修正】一个节流的滚动调度函数
+  // 【简化】滚动调度函数
   scheduleAutoScroll: function() {
-    if (this.scrollTimer) return;
+    if (this.scrollTimer || this.data.userHasScrolledUp) {
+      return;
+    }
 
     this.scrollTimer = setTimeout(() => {
       this.scrollTimer = null;
       if (!this.data.userHasScrolledUp) {
-        // 【关键修正】先清空然后重新设置，确保滚动生效
         this.setData({ scrollIntoView: '' }, () => {
-          // 短暂延迟后设置滚动锚点
-          setTimeout(() => {
+          wx.nextTick(() => {
             this.setData({ scrollIntoView: 'chat-bottom-anchor' });
-          }, 50);
+          });
         });
       }
-    }, 100);
+    }, 50);
   },
 
   scrollToBottom: function(force = false) {
@@ -276,17 +343,18 @@ Page({
     this.scheduleAutoScroll();
   },
 
-  // 【修正】强制滚动逻辑
+  // 【简化】强制滚动逻辑
   forceScrollToBottom: function() {
+    this.hasSmartPaused = false; // 重置智能暂停标记
+    console.log('🔄 用户点击回到底部，重置智能暂停状态');
     this.setData({
       userHasScrolledUp: false,
       showScrollToBottom: false,
-      scrollIntoView: '' // 先清空
+      scrollIntoView: ''
     }, () => {
-      // 立即设置滚动锚点，不使用节流
-      setTimeout(() => {
+      wx.nextTick(() => {
         this.setData({ scrollIntoView: 'chat-bottom-anchor' });
-      }, 50);
+      });
     });
   },
 
@@ -385,7 +453,7 @@ Page({
     });
   
     socketTask.onMessage((res) => {
-      console.log('接收到WebSocket消息:', res.data);
+      // console.log('接收到WebSocket消息:', res.data); // 减少日志输出
       const data = JSON.parse(res.data);
       let newMessages = [...this.data.messages]; // 在顶部声明
       
@@ -552,12 +620,19 @@ Page({
           }
         }
         
-        // 智能滚动：AI回复完成时强制滚动到底部，确保完整显示
-        if (!this.data.userHasScrolledUp) {
+        // 智能滚动：AI回复完成时的处理
+        // 只有在用户没有上滑且没有智能暂停的情况下才滚动到底部
+        if (!this.data.userHasScrolledUp && !this.hasSmartPaused) {
+          console.log('📝 AI回复完成，自动滚动到底部');
           // 延迟滚动，确保DOM完全更新
           setTimeout(() => {
             this.forceScrollToBottom();
           }, 150);
+        } else {
+          console.log('📝 AI回复完成，保持当前位置', {
+            用户已上滑: this.data.userHasScrolledUp,
+            智能暂停: this.hasSmartPaused
+          });
         }
       }
     });
@@ -612,6 +687,14 @@ Page({
   // 【修正】发送逻辑
   sendMessage: function() {
     if (!this.data.userInput || this.data.isConnecting) return;
+    
+    // 【简化】重置所有滚动状态，让用户消息发送后能正常自动滚动
+    this.hasSmartPaused = false; // 重置智能暂停标记
+    console.log('✅ 用户发送消息，重置智能暂停状态');
+    this.setData({
+      userHasScrolledUp: false,
+      showScrollToBottom: false
+    });
 
     const app = getApp();
     const userMessageContent = this.data.userInput;
@@ -662,8 +745,12 @@ Page({
       userInput: "",
       isConnecting: true,
     }, () => {
-      // 发送消息时强制滚动到底部
-      this.forceScrollToBottom();
+      // 发送消息时立即滚动到底部
+      this.setData({ scrollIntoView: '' }, () => {
+        wx.nextTick(() => {
+          this.setData({ scrollIntoView: 'chat-bottom-anchor' });
+        });
+      });
     });
     
     this.socketTask.send({
@@ -687,6 +774,21 @@ Page({
     }, 30000);
   },
 
+  /**
+   * 【新增】处理键盘高度变化事件
+   * @param {object} res - 事件回调参数，包含键盘高度 an `height`
+   */
+  handleKeyboardHeightChange: function(res) {
+    console.log('键盘高度变化:', res.height);
+
+    if (!this.data.userHasScrolledUp) {
+      // 使用一个短暂的延迟，等待 scroll-view 的高度完成变化
+      setTimeout(() => {
+        this.forceScrollToBottom();
+      }, 100); 
+    }
+  },
+
   // 【修正】onUnload
   onUnload: function () {
     this.isPageUnloaded = true;
@@ -698,7 +800,10 @@ Page({
     if (this.scrollTimer) clearTimeout(this.scrollTimer);
     if (this.scrollEventTimer) clearTimeout(this.scrollEventTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    if (this._stream.timer) clearTimeout(this._stream.timer); // <--- 补充清理流定时器
+    if (this._stream.timer) clearTimeout(this._stream.timer);
+
+    // 【新增】注销键盘监听
+    wx.offKeyboardHeightChange(this.handleKeyboardHeightChange);
   },
 
   // 页面隐藏时也应该停止重连
@@ -867,6 +972,13 @@ Page({
 
   // 【修正】sendVoiceMessage 函数
   sendVoiceMessage: function(text) {
+    // 【简化】重置滚动状态
+    this.hasSmartPaused = false; // 重置智能暂停标记
+    this.setData({
+      userHasScrolledUp: false,
+      showScrollToBottom: false
+    });
+
     const app = getApp();
     const newUserMessage = {
       role: 'user',
@@ -1016,48 +1128,58 @@ Page({
     console.log('建议问题处理完成');
   },
 
-  // 滚动事件处理 - 智能滚动核心逻辑（节流优化）
+  // 【简化】滚动事件处理 - 只有用户触摸时才认为是用户滚动
   onScroll: function(e) {
-    // 节流处理：减少滚动事件的处理频率
-    if (this.scrollEventTimer) {
-      return; // 如果上一次事件还在处理中，跳过这次事件
-    }
-    
+    if (this.scrollEventTimer) return;
     this.scrollEventTimer = setTimeout(() => {
       this.scrollEventTimer = null;
-    }, 50); // 50ms内最多处理一次滚动事件
+    }, 100);
 
     const { scrollTop, scrollHeight } = e.detail;
-    const chatViewHeight = this.data.chatHistoryHeight || 700; // 使用 onReady 中获取的高度，提供一个备用值
-
-    // 定义一个阈值，比如距离底部100px以内都算作"在底部"
-    const atBottomThreshold = 100;
+    const chatViewHeight = this.data.chatHistoryHeight || 700;
+    const atBottomThreshold = 50;
     const isAtBottom = scrollHeight - scrollTop - chatViewHeight < atBottomThreshold;
+    
+    console.log('🔍 onScroll事件:', {
+      isAtBottom: isAtBottom,
+      userIsTouching: this.userIsTouching,
+      距离底部: scrollHeight - scrollTop - chatViewHeight
+    });
 
-    // 如果用户当前不在底部
-    if (!isAtBottom) {
-      // 并且之前的状态是"在底部"，那么说明是用户刚刚向上滚动
+    if (!isAtBottom && this.userIsTouching) {
+      // 【关键】只有用户正在触摸时，才认为是用户主导的滚动
       if (!this.data.userHasScrolledUp) {
+        console.log('📍 检测到用户主动上滑 (基于触摸事件)');
         this.setData({ userHasScrolledUp: true });
       }
-      // 向上滚动超过一定距离后，显示"回到底部"按钮
       if (!this.data.showScrollToBottom) {
         this.setData({ showScrollToBottom: true });
       }
-    } else {
-      // 如果用户当前在底部
-      // 并且之前的状态是"已向上滚动"，那么说明是用户自己滚回来了
-      if (this.data.userHasScrolledUp) {
-        this.setData({ userHasScrolledUp: false });
-      }
-      // 在底部时，隐藏"回到底部"按钮
-      if (this.data.showScrollToBottom) {
-        this.setData({ showScrollToBottom: false });
+    } else if (isAtBottom) {
+      // 到达底部时重置所有状态（无论是否触摸）
+      if (this.data.userHasScrolledUp || this.data.showScrollToBottom || this.hasSmartPaused) {
+        console.log('📍 回到底部，重置所有状态');
+        this.hasSmartPaused = false;
+        this.setData({
+          userHasScrolledUp: false,
+          showScrollToBottom: false
+        });
       }
     }
   },
 
-  // 在页面加载时获取聊天区域的实际高度
+  // 【新增】触摸开始 - 用户开始触摸屏幕
+  onTouchStart: function(e) {
+    this.userIsTouching = true;
+    console.log('👆 用户开始触摸滚动区域');
+  },
+
+  // 【新增】触摸结束 - 用户停止触摸屏幕
+  onTouchEnd: function(e) {
+    this.userIsTouching = false;
+    console.log('🤚 用户结束触摸');
+  },
+
   onReady: function() {
     // 获取聊天区域的实际高度
     wx.createSelectorQuery()

@@ -14,6 +14,8 @@
     show-scrollbar="{{false}}"
     bounces="{{false}}"
     bindscroll="onScroll"
+    bindtouchstart="onTouchStart"
+    bindtouchend="onTouchEnd"
   >
     <block wx:for="{{messages}}" wx:key="timestamp">
       <!-- 日期和时间显示 -->
