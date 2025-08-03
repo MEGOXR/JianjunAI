@@ -985,6 +985,37 @@ Page({
     }
   },
 
+  // 建议问题点击处理
+  onSuggestionTap: function(e) {
+    const { question, msgIndex } = e.currentTarget.dataset;
+    if (!question) return;
+    
+    console.log('用户点击建议问题:', question);
+    
+    // 移除震动效果，使用更轻微的视觉反馈
+    
+    // 立即隐藏建议问题区域，提升用户体验
+    this.setData({
+      [`messages[${msgIndex}].suggestions`]: []
+    }, () => {
+      // 隐藏完成后再发送消息
+      this.setData({
+        userInput: question
+      }, () => {
+        this.sendMessage();
+      });
+    });
+    
+    // 更新本地存储
+    const messages = this.data.messages;
+    if (messages[msgIndex] && messages[msgIndex].suggestions) {
+      messages[msgIndex].suggestions = [];
+      wx.setStorageSync('messages', messages);
+    }
+    
+    console.log('建议问题处理完成');
+  },
+
   // 滚动事件处理 - 智能滚动核心逻辑（节流优化）
   onScroll: function(e) {
     // 节流处理：减少滚动事件的处理频率

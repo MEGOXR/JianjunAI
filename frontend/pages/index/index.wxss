@@ -71,6 +71,8 @@
   max-width: 80%;
   word-wrap: break-word;
   margin-right: 22rpx; /* 统一右侧边距，增加5px(约10rpx) */
+  font-size: 32rpx;
+  line-height: 1.6;
 }
 
 .ai-message {
@@ -83,6 +85,8 @@
   box-shadow: 0 2rpx 4rpx rgba(0,0,0,0.1);
   margin-left: 22rpx; /* 统一左侧边距，增加5px(约10rpx) */
   margin-right: 22rpx; /* 与用户消息右边界对齐，增加5px(约10rpx) */
+  font-size: 32rpx;
+  line-height: 1.6;
 }
 
 .input-area {
@@ -267,4 +271,71 @@
 .arrow-down-icon {
   width: 60rpx; /* 图标尺寸适中，与圆形底色协调 */
   height: 60rpx;
+}
+
+/* 建议问题样式 */
+.suggestions-container {
+  margin-top: 16rpx;
+  padding: 0 32rpx 0 32rpx; /* 左对齐，统一边距 */
+}
+
+.suggestions-grid {
+  display: flex;
+  flex-direction: column; /* 垂直排列，每个问题占一行 */
+  gap: 16rpx;
+  align-items: flex-start; /* 左对齐 */
+}
+
+.suggestion-chip {
+  display: inline-flex; /* 使用inline-flex实现自适应宽度 */
+  align-items: center;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border: 1rpx solid #dee2e6;
+  border-radius: 24rpx;
+  padding: 20rpx 28rpx;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.05);
+  min-width: 120rpx;
+  max-width: 100%;
+}
+
+/* 点击状态反馈 */
+.suggestion-chip:active {
+  background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+  transform: scale(0.98);
+}
+
+.suggestion-text {
+  font-size: 26rpx;
+  color: #333;
+  font-weight: 500;
+  flex: 1;
+  position: relative;
+  z-index: 1;
+  line-height: 1.4;
+}
+
+/* 移除小箭头相关样式 */
+
+
+/* 适配深色模式（如果需要） */
+@media (prefers-color-scheme: dark) {
+  .suggestion-chip {
+    background: linear-gradient(135deg, #2c2c2e 0%, #1c1c1e 100%);
+    border-color: #3a3a3c;
+  }
+  
+  .suggestion-text {
+    color: #ffffff;
+  }
+  
+  .suggestions-label {
+    color: #8e8e93;
+  }
+  
+  .icon-arrow {
+    color: #8e8e93;
+  }
 }

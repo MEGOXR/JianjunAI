@@ -32,6 +32,22 @@
           <!-- 【关键简化】直接渲染 content，不再需要 segments 和 if/else 判断 -->
           <text user-select="true">{{item.content}}</text>
         </view>
+        
+        <!-- 建议问题区域 -->
+        <view class="suggestions-container" 
+              wx:if="{{item.suggestions && item.suggestions.length > 0}}">
+          <view class="suggestions-grid">
+            <view wx:for="{{item.suggestions}}" 
+                  wx:for-item="suggestion" 
+                  wx:key="*this"
+                  class="suggestion-chip"
+                  data-question="{{suggestion}}"
+                  data-msg-index="{{index}}"
+                  bind:tap="onSuggestionTap">
+              <text class="suggestion-text">{{suggestion}}</text>
+            </view>
+          </view>
+        </view>
       </view>
     </block>
     

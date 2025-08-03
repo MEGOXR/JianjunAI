@@ -3,6 +3,7 @@ const userDataService = require('../services/userDataService');
 const greetingService = require('../services/greetingService');
 const nameExtractorService = require('../services/nameExtractorService');
 const promptService = require('../services/promptService');
+const suggestionService = require('../services/suggestionService');
 const ErrorHandler = require('../middleware/errorHandler');
 
 // 环境变量读取辅助函数（处理 Azure App Service 的 APPSETTING_ 前缀）
@@ -353,9 +354,25 @@ exports.sendMessage = async (ws, prompt, wxNickname) => {
       }
     }
 
-    console.log('发送done标记给客户端');
-    ws.send(JSON.stringify({ done: true }));
-    console.log('done标记发送完成');
+    // 生成建议问题
+    console.log('开始生成建议问题...');
+    let suggestions = [];
+    try {
+      suggestions = await suggestionService.generateSuggestions(history, cleanedResponse);
+      console.log('建议问题生成完成:', suggestions);
+    } catch (error) {
+      console.error('生成建议问题失败:', error);
+      // 如果生成失败，使用备用建议问题
+      suggestions = suggestionService.getFallbackSuggestions();
+      console.log('使用备用建议问题:', suggestions);
+    }
+
+    console.log('发送done标记和建议问题给客户端');
+    ws.send(JSON.stringify({ 
+      done: true,
+      suggestions: suggestions
+    }));
+    console.log('done标记和建议问题发送完成');
   } catch (error) {
     console.error("Azure OpenAI 调用出错:", error);
     ErrorHandler.handleWebSocketError(ws, error, 'Azure OpenAI Chat');

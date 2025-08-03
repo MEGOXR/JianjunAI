@@ -20,7 +20,8 @@
       "Bash(curl:*)",
       "Bash(del \"D:\\AIDev\\JianjunAI\\backend\\test-jwt-websocket.js\")",
       "Bash(echo:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(del test-suggestions.js)"
     ],
     "deny": []
   }
