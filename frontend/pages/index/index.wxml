@@ -1,9 +1,4 @@
 <view class="container">
-  <!-- 用户信息区域 -->
-  <view class="user-info-bar" wx:if="{{!wxNickname}}">
-    <text class="user-info-text">👋 为了更好的体验，建议授权微信昵称</text>
-    <button class="auth-btn" bindtap="getUserInfo" size="mini" type="primary">授权</button>
-  </view>
   
   <scroll-view 
     scroll-y 

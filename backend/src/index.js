@@ -80,7 +80,7 @@ app.get('/health', (req, res) => {
 
 // 认证端点 - 生成JWT令牌
 app.post('/auth/token', (req, res) => {
-  const { userId, wxNickname } = req.body;
+  const { userId } = req.body;
   
   // 验证用户ID
   if (!SecurityMiddleware.isValidUserId(userId)) {
@@ -88,7 +88,7 @@ app.post('/auth/token', (req, res) => {
   }
   
   // 生成JWT令牌
-  const token = AuthMiddleware.generateToken(userId, wxNickname || '');
+  const token = AuthMiddleware.generateToken(userId);
   
   res.json({
     token,
@@ -169,7 +169,6 @@ wss.on('connection', async (ws, req) => {
   }
   
   const userId = ws.userId;
-  const wxNickname = ws.wxNickname || '';
   
   // 检查速率限制
   if (!SecurityMiddleware.checkRateLimit(userId)) {
@@ -178,16 +177,13 @@ wss.on('connection', async (ws, req) => {
     return;
   }
   
-  // 清理微信昵称
-  const sanitizedNickname = SecurityMiddleware.sanitizeWxNickname(wxNickname);
-  
   ws.userId = userId;
   
   // 注册心跳监控
   heartbeatService.register(ws);
   
   // 初始化连接并发送问候
-  await chatController.handleConnection(ws, sanitizedNickname);
+  await chatController.handleConnection(ws);
 
   // 监听消息
   ws.on('message', async (message) => {
@@ -197,11 +193,8 @@ wss.on('connection', async (ws, req) => {
       if (data.type === 'init') {
         // 客户端初始化请求，重新发送问候
         console.log('收到init消息:', data);
-        const sanitizedNickname = SecurityMiddleware.sanitizeWxNickname(data.wxNickname || '');
-        console.log('处理后的昵称:', sanitizedNickname);
-        
         try {
-          await chatController.handleConnection(ws, sanitizedNickname);
+          await chatController.handleConnection(ws);
           console.log('handleConnection 处理完成');
         } catch (error) {
           console.error('handleConnection 处理失败:', error);
@@ -234,10 +227,8 @@ wss.on('connection', async (ws, req) => {
       if (data.prompt) {
         // 清理输入内容
         const sanitizedPrompt = SecurityMiddleware.sanitizeMedicalContent(data.prompt);
-        const sanitizedNickname = SecurityMiddleware.sanitizeWxNickname(data.wxNickname || wxNickname);
-        
         // 调用 Azure OpenAI，返回流式数据
-        await chatController.sendMessage(ws, sanitizedPrompt, sanitizedNickname);
+        await chatController.sendMessage(ws, sanitizedPrompt);
       }
     } catch (error) {
       console.error('WebSocket 错误:', error);

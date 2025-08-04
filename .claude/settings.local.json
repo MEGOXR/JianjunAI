@@ -21,8 +21,10 @@
       "Bash(del \"D:\\AIDev\\JianjunAI\\backend\\test-jwt-websocket.js\")",
       "Bash(echo:*)",
       "Bash(grep:*)",
-      "Bash(del test-suggestions.js)"
+      "Bash(del test-suggestions.js)",
+      "Bash(git --version)"
     ],
     "deny": []
-  }
+  },
+  "$schema": "https://json.schemastore.org/claude-code-settings.json"
 }

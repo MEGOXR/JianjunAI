@@ -9,8 +9,7 @@ Page({
     showScrollToBottom: false,
     userHasScrolledUp: false,
     scrollIntoView: '', // 替代scrollTop，用于精确滚动
-    wxNickname: '',
-    wxAvatarUrl: ''
+    messageCount: 0 // 用于统计消息数量
   },
 
   onLoad: function() {
@@ -20,6 +19,7 @@ Page({
     this.authToken = null;
     this.hasSmartPaused = false; // 【新增】标记是否已经智能暂停
     this.userIsTouching = false; // 【新增】用户是否正在触摸屏幕
+    this.messageCount = 0; // 用户发送的消息数量
     
     // 定时器句柄
     this.reconnectTimer = null;
@@ -71,88 +71,8 @@ Page({
       }
     });
     
-    this.checkAndGetUserInfo(() => {
-      this.initializeAuth(this.userId, () => {
-        this.setupWebSocket();
-      });
-    });
-  },
-  
-  checkAndGetUserInfo: function(callback) {
-    // 先检查本地是否已保存用户信息
-    const savedUserInfo = wx.getStorageSync('userInfo');
-    if (savedUserInfo && savedUserInfo.nickName) {
-      this.setData({
-        wxNickname: savedUserInfo.nickName,
-        wxAvatarUrl: savedUserInfo.avatarUrl
-      });
-      console.log('已使用保存的用户信息:', savedUserInfo.nickName);
-      if (callback) callback();
-      return;
-    }
-    
-    // 如果没有保存的信息，设置默认值并执行回调
-    this.setData({
-      wxNickname: '微信用户'
-    });
-    if (callback) callback();
-    
-    // 异步尝试获取用户信息
-    this.getUserInfo();
-  },
-
-  getUserInfo: function() {
-    // 尝试获取用户信息
-    wx.getUserProfile({
-      desc: '用于提供个性化的医美咨询服务',
-      success: (res) => {
-        const userInfo = {
-          nickName: res.userInfo.nickName,
-          avatarUrl: res.userInfo.avatarUrl
-        };
-        
-        // 保存用户信息到本地
-        wx.setStorageSync('userInfo', userInfo);
-        
-        this.setData({
-          wxNickname: userInfo.nickName,
-          wxAvatarUrl: userInfo.avatarUrl
-        });
-        
-        console.log('获取用户信息成功:', userInfo.nickName);
-        wx.showToast({
-          title: `欢迎 ${userInfo.nickName}`,
-          icon: 'success',
-          duration: 2000
-        });
-      },
-      fail: (error) => {
-        console.log('用户拒绝授权获取用户信息:', error);
-        // 显示一个温馨的提示，而不是强制要求授权
-        this.showUserInfoTip();
-      }
-    });
-  },
-
-  // 显示用户信息授权提示
-  showUserInfoTip: function() {
-    wx.showModal({
-      title: '个性化服务',
-      content: '授权微信昵称后，我们可以为您提供更个性化的医美咨询服务。您可以随时在设置中重新授权。',
-      showCancel: true,
-      cancelText: '暂不授权',
-      confirmText: '去授权',
-      success: (res) => {
-        if (res.confirm) {
-          // 用户点击"去授权"，再次尝试获取
-          this.getUserInfo();
-        } else {
-          // 用户选择暂不授权，设置默认昵称
-          this.setData({
-            wxNickname: '用户'
-          });
-        }
-      }
+    this.initializeAuth(this.userId, () => {
+      this.setupWebSocket();
     });
   },
 
@@ -195,8 +115,7 @@ Page({
         'content-type': 'application/json'
       },
       data: {
-        userId: userId,
-        wxNickname: this.data.wxNickname || ''
+        userId: userId
       },
       success: (res) => {
         if (res.data.token) {
@@ -225,6 +144,7 @@ Page({
     });
   },
   
+
   // 【新增】一个用于将缓冲区内容刷新到UI的函数
   flushStream: function() {
     if (this._stream.buf && this._stream.targetIndex != null) {
@@ -368,7 +288,6 @@ Page({
     const wsUrl = `${getApp().globalData.wsBaseUrl}`;
     console.log('尝试连接WebSocket:', wsUrl);
     console.log('User-Id:', this.userId);
-    console.log('Wx-Nickname:', this.data.wxNickname);
     
     // Use JWT authentication
     const headers = {};
@@ -441,8 +360,7 @@ Page({
       try {
         socketTask.send({
           data: JSON.stringify({
-            type: 'init',
-            wxNickname: this.data.wxNickname || ''
+            type: 'init'
           })
         });
         console.log("初始化消息发送成功");
@@ -687,6 +605,10 @@ Page({
   sendMessage: function() {
     if (!this.data.userInput || this.data.isConnecting) return;
     
+    // 增加消息计数
+    this.messageCount++;
+    this.setData({ messageCount: this.messageCount });
+    
     // 【简化】重置所有滚动状态，让用户消息发送后能正常自动滚动
     this.hasSmartPaused = false; // 重置智能暂停标记
     console.log('✅ 用户发送消息，重置智能暂停状态');
@@ -754,8 +676,7 @@ Page({
     
     this.socketTask.send({
       data: JSON.stringify({
-        prompt: userMessageContent,
-        wxNickname: this.data.wxNickname || ''
+        prompt: userMessageContent
       }),
       fail: () => {
         wx.showToast({ title: "发送失败", icon: "none" });
@@ -1027,8 +948,7 @@ Page({
     if (this.socketTask) {
       this.socketTask.send({
         data: JSON.stringify({ 
-          prompt: text,
-          wxNickname: this.data.wxNickname || ''
+          prompt: text
         })
       });
     }

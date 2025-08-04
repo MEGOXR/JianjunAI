@@ -13,10 +13,10 @@ class GreetingService {
     });
   }
 
-  async generateGreeting(userData, wxNickname) {
+  async generateGreeting(userData) {
     const chatHistory = userData?.chatHistory || [];
     const extractedName = userData?.userInfo?.extractedName;
-    const name = extractedName || wxNickname;
+    const name = extractedName;
     
     console.log('检查问候语条件:', {
       hasUserData: !!userData,
