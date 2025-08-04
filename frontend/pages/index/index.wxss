@@ -320,22 +320,23 @@
 /* 移除小箭头相关样式 */
 
 
-/* 适配深色模式（如果需要） */
+/* 适配深色模式 */
 @media (prefers-color-scheme: dark) {
   .suggestion-chip {
-    background: linear-gradient(135deg, #2c2c2e 0%, #1c1c1e 100%);
-    border-color: #3a3a3c;
+    /* 使用更柔和的深灰色，而不是纯黑色 */
+    background: linear-gradient(135deg, #495057 0%, #343a40 100%);
+    border-color: #6c757d;
+    box-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.2);
   }
   
   .suggestion-text {
-    color: #ffffff;
+    /* 使用略带暖色的白色，减少对比度 */
+    color: #f8f9fa;
   }
   
-  .suggestions-label {
-    color: #8e8e93;
-  }
-  
-  .icon-arrow {
-    color: #8e8e93;
+  .suggestion-chip:active {
+    background: linear-gradient(135deg, #343a40 0%, #212529 100%);
+    transform: scale(0.98);
   }
 }
+@import 'index-wxa-auto-dark.wxss'
