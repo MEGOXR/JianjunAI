@@ -9,7 +9,8 @@ Page({
     showScrollToBottom: false,
     userHasScrolledUp: false,
     scrollIntoView: '', // 替代scrollTop，用于精确滚动
-    messageCount: 0 // 用于统计消息数量
+    messageCount: 0, // 用于统计消息数量
+    isGenerating: false // 标识AI是否正在生成回复
   },
 
   onLoad: function() {
@@ -438,7 +439,18 @@ Page({
       // 处理错误消息
       if (data.error) {
         console.error('收到服务器错误:', data.error, data.details);
-        this.setData({ isConnecting: false });
+        this.setData({ 
+          isConnecting: false,
+          isGenerating: false
+        });
+        
+        // 移除加载消息
+        let messages = [...this.data.messages];
+        const loadingIndex = messages.findIndex(msg => msg.isLoading);
+        if (loadingIndex !== -1) {
+          messages.splice(loadingIndex, 1);
+          this.setData({ messages });
+        }
         wx.showToast({ 
           title: "服务器错误: " + data.details, 
           icon: "none",
@@ -449,14 +461,27 @@ Page({
       
       // 【优化①】流式数据处理
       if (data.data) {
-        // 如果是第一个分片，先创建一条空的AI消息占位
+        // 如果是第一个分片，先移除加载消息并创建真实的AI消息
         if (this._stream.targetIndex == null) {
+          // 移除加载消息
+          let currentMessages = [...this.data.messages];
+          const loadingIndex = currentMessages.findIndex(msg => msg.isLoading);
+          if (loadingIndex !== -1) {
+            currentMessages.splice(loadingIndex, 1);
+          }
+          
+          // 设置生成状态为false
+          this.setData({ 
+            messages: currentMessages,
+            isGenerating: false 
+          });
+          
           const app = getApp();
           const msg = { role: 'assistant', content: '', timestamp: Date.now(), suggestions: [] };
           
           // 获取上一条消息的时间戳
-          const lastMessage = this.data.messages.length > 0 ? 
-            this.data.messages[this.data.messages.length - 1] : null;
+          const lastMessage = currentMessages.length > 0 ? 
+            currentMessages[currentMessages.length - 1] : null;
           const lastTimestamp = lastMessage ? lastMessage.timestamp : null;
           
           // 计算是否应该显示时间
@@ -485,9 +510,10 @@ Page({
           }
           msg.formattedTime = app.getFormattedTime(msg.timestamp);
           
-          const idx = this.data.messages.length;
+          currentMessages.push(msg);
+          const idx = currentMessages.length - 1;
           this.setData({ 
-            [`messages[${idx}]`]: msg, 
+            messages: currentMessages,
             isConnecting: true 
           });
           this._stream.targetIndex = idx;
@@ -511,7 +537,10 @@ Page({
 
         // 更新最终状态和可能的建议
         if (lastIndex != null) {
-          const updateData = { isConnecting: false };
+          const updateData = { 
+            isConnecting: false,
+            isGenerating: false // 生成完成
+          };
           if (data.suggestions && data.suggestions.length > 0) {
             updateData[`messages[${lastIndex}].suggestions`] = data.suggestions;
           }
@@ -661,10 +690,20 @@ Page({
     }
     newUserMessage.formattedTime = app.getFormattedTime(newUserMessage.timestamp);
 
+    // 添加加载消息
+    const loadingMessage = {
+      role: 'assistant',
+      content: '',
+      isLoading: true,
+      timestamp: Date.now(),
+      id: 'loading-' + Date.now()
+    };
+    
     this.setData({
-      messages: this.data.messages.concat(newUserMessage),
+      messages: this.data.messages.concat([newUserMessage, loadingMessage]),
       userInput: "",
       isConnecting: true,
+      isGenerating: true
     }, () => {
       // 发送消息时立即滚动到底部
       this.setData({ scrollIntoView: '' }, () => {

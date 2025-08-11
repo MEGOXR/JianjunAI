@@ -25,9 +25,14 @@
 
       <!-- AI 消息 -->
       <view class="message-item" id="msg-{{index}}" wx:if="{{item.role === 'assistant'}}">
-        <view class="ai-message">
+        <view class="ai-message {{item.isLoading ? 'loading-message' : ''}}">
+          <!-- 加载动画 -->
+          <view wx:if="{{item.isLoading}}" class="loading-container">
+            <text class="loading-text">正在生成</text>
+            <text class="loading-dots"></text>
+          </view>
           <!-- 【关键简化】直接渲染 content，不再需要 segments 和 if/else 判断 -->
-          <text user-select="true">{{item.content}}</text>
+          <text wx:else user-select="true">{{item.content}}</text>
         </view>
         
         <!-- 建议问题区域 -->
