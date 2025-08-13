@@ -80,6 +80,13 @@ class AuthMiddleware {
     req.user = decoded;
     next();
   }
+
+  /**
+   * Express middleware for token authentication (alias for requireAuth)
+   */
+  static authenticateToken(req, res, next) {
+    return AuthMiddleware.requireAuth(req, res, next);
+  }
 }
 
 module.exports = AuthMiddleware;

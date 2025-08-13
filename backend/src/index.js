@@ -8,6 +8,8 @@ const AuthMiddleware = require('./middleware/auth');
 const SecurityHeaders = require('./middleware/headers');
 const heartbeatService = require('./services/heartbeatService');
 const ErrorHandler = require('./middleware/errorHandler');
+const speechRoutes = require('./routes/speechRoutes'); // 导入语音路由
+const cleanupUtil = require('./utils/cleanup'); // 导入清理工具
 
 const app = express();
 const port = process.env.PORT || 8080;
@@ -96,6 +98,18 @@ app.post('/auth/token', (req, res) => {
     tokenType: 'Bearer'
   });
 });
+
+// 注册语音路由
+app.use('/api', speechRoutes);
+
+// 设置临时文件清理定时器（每30分钟清理一次超过1小时的文件）
+const tempDir = require('path').join(__dirname, '../temp');
+setInterval(() => {
+  cleanupUtil.cleanupAndReport(tempDir, 60 * 60 * 1000); // 清理1小时前的文件
+}, 30 * 60 * 1000); // 每30分钟执行一次
+
+// 启动时立即清理一次
+cleanupUtil.cleanupAndReport(tempDir, 60 * 60 * 1000).catch(console.error);
 
 // 配置检查端点
 app.get('/config-check', (req, res) => {
