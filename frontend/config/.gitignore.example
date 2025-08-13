@@ -1,0 +1,6 @@
+# 如果不想将环境配置提交到git，可以：
+# 1. 复制 env.js 到 env.local.js
+# 2. 在 .gitignore 中添加: frontend/config/env.local.js
+# 3. 修改 app.js 引用: require('./config/env.local.js')
+
+# 这样可以保持每个开发者的本地配置独立

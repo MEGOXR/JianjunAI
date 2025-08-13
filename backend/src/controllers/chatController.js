@@ -136,16 +136,17 @@ process.on('SIGTERM', () => {
   chatHistories.clear();
 });
 
-// 生成或获取用户ID
+// 获取用户ID（应该已经通过JWT认证设置）
 const getUserId = (ws) => {
   if (!ws.userId) {
-    ws.userId = Math.random().toString(36).substring(7);
+    console.error('WebSocket没有用户ID，JWT认证可能失败');
+    throw new Error('User ID not found - authentication required');
   }
   return ws.userId;
 };
 
-exports.sendMessage = async (ws, prompt, wxNickname) => {
-  console.log('收到消息:', { prompt, wxNickname, userId: ws.userId });
+exports.sendMessage = async (ws, prompt) => {
+  console.log('收到消息:', { prompt, userId: ws.userId });
   
   try {
     // 验证Azure配置
@@ -415,15 +416,14 @@ exports.handleDisconnect = (ws) => {
   
   // 清理 WebSocket 对象上的用户数据
   delete ws.userId;
-  delete ws.wxNickname;
   
   console.log(`WebSocket disconnected for user: ${userId || 'unknown'}`);
 };
 
 // 新增：处理用户连接时的初始化
-exports.handleConnection = async (ws, wxNickname) => {
+exports.handleConnection = async (ws) => {
   try {
-    console.log('处理WebSocket连接初始化, wxNickname:', wxNickname);
+    console.log('处理WebSocket连接初始化');
     
     const userId = getUserId(ws);
     console.log('获取用户ID:', userId);
@@ -433,13 +433,11 @@ exports.handleConnection = async (ws, wxNickname) => {
     
     // 生成智能问候语（基于时间判断是否需要）
     // 在更新用户信息之前检查是否需要问候语
-    const greeting = await greetingService.generateGreeting(userData, wxNickname);
+    const greeting = await greetingService.generateGreeting(userData);
     
-    // 更新用户最后访问时间（在问候语生成之后）
-    if (wxNickname) {
-      await userDataService.updateUserInfo(userId, { wxNickname });
-      console.log('更新用户信息成功');
-    }
+    // 更新用户最后访问时间
+    await userDataService.updateUserInfo(userId, { lastVisitTime: Date.now() });
+    console.log('更新用户信息成功');
     
     // 仅在需要时发送问候消息
     if (greeting) {
@@ -457,7 +455,19 @@ exports.handleConnection = async (ws, wxNickname) => {
     return userId;
   } catch (error) {
     console.error('handleConnection 出错:', error);
-    ErrorHandler.handleWebSocketError(ws, error, 'Connection Initialization');
-    throw error; // 重新抛出错误
+    // 不要关闭连接，只发送错误消息
+    try {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'error',
+          error: '初始化失败',
+          message: '连接初始化时遇到问题，但连接仍然可用'
+        }));
+      }
+    } catch (sendError) {
+      console.error('发送错误消息失败:', sendError);
+    }
+    // 不重新抛出错误，避免关闭连接
+    return ws.userId || null;
   }
 };

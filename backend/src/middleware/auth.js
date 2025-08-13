@@ -7,11 +7,10 @@ class AuthMiddleware {
   /**
    * Generate JWT token for user
    */
-  static generateToken(userId, wxNickname) {
+  static generateToken(userId) {
     return jwt.sign(
       { 
         userId, 
-        wxNickname,
         timestamp: Date.now() 
       },
       this.JWT_SECRET,
@@ -56,7 +55,6 @@ class AuthMiddleware {
       
       if (decoded) {
         ws.userId = decoded.userId;
-        ws.wxNickname = decoded.wxNickname;
         console.log(`JWT authentication successful for user: ${decoded.userId}`);
         return true;
       } else {
@@ -81,6 +79,13 @@ class AuthMiddleware {
 
     req.user = decoded;
     next();
+  }
+
+  /**
+   * Express middleware for token authentication (alias for requireAuth)
+   */
+  static authenticateToken(req, res, next) {
+    return AuthMiddleware.requireAuth(req, res, next);
   }
 }
 

@@ -1,12 +1,13 @@
+// 引入环境配置
+const envConfig = require('./config/env.js');
+
 App({
   globalData: {
-    // 生产环境
-    wsBaseUrl: "wss://mego-xr.com/api/",
-    baseUrl: "https://mego-xr.com/api",
-    // 本地测试环境
-    // wsBaseUrl: "ws://localhost:3000",
-    // baseUrl: "http://localhost:3000",
-    messagesLoaded: false
+    // 从配置文件读取环境设置
+    wsBaseUrl: envConfig.wsBaseUrl,
+    baseUrl: envConfig.baseUrl,
+    messagesLoaded: false,
+    currentEnv: envConfig.currentEnv
   },
   onLaunch: function () {
     // 应用启动时的初始化逻辑

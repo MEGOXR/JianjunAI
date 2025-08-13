@@ -1,9 +1,4 @@
 <view class="container">
-  <!-- 用户信息区域 -->
-  <view class="user-info-bar" wx:if="{{!wxNickname}}">
-    <text class="user-info-text">👋 为了更好的体验，建议授权微信昵称</text>
-    <button class="auth-btn" bindtap="getUserInfo" size="mini" type="primary">授权</button>
-  </view>
   
   <scroll-view 
     scroll-y 
@@ -30,9 +25,14 @@
 
       <!-- AI 消息 -->
       <view class="message-item" id="msg-{{index}}" wx:if="{{item.role === 'assistant'}}">
-        <view class="ai-message">
+        <view class="ai-message {{item.isLoading ? 'loading-message' : ''}}">
+          <!-- 加载动画 -->
+          <view wx:if="{{item.isLoading}}" class="loading-container">
+            <text class="loading-text">正在生成</text>
+            <text class="loading-dots"></text>
+          </view>
           <!-- 【关键简化】直接渲染 content，不再需要 segments 和 if/else 判断 -->
-          <text user-select="true">{{item.content}}</text>
+          <text wx:else user-select="true">{{item.content}}</text>
         </view>
         
         <!-- 建议问题区域 -->
@@ -59,7 +59,8 @@
   </scroll-view>
 
   <!-- 输入区域 -->
-  <view class="input-area">
+  <!-- 文字输入模式 -->
+  <view class="input-area" wx:if="{{!isVoiceMode}}">
     <view class="input-container">
       <view class="input-wrapper">
         <input
@@ -77,12 +78,12 @@
         <!-- 自定义 placeholder，当没有输入内容时显示 -->
         <view wx:if="{{!userInput}}" class="custom-placeholder">请输入您的问题</view>
       </view>
-      <!-- <image 
+      <image 
         wx:if="{{!userInput}}"
         class="mode-switch-btn"
         src="/images/voice.png"
         bindtap="switchToVoice"
-      /> -->
+      />
       <image 
         wx:if="{{userInput}}"
         class="send-btn"
@@ -92,8 +93,57 @@
     </view>
   </view>
 
+  <!-- 语音输入模式 -->
+  <view class="voice-input-area" wx:if="{{isVoiceMode}}">
+    <view class="voice-container">
+      <!-- 按住说话按钮 -->
+      <button class="voice-btn {{isRecording ? 'recording' : ''}}"
+              bindtouchstart="onVoiceTouchStart"
+              bindtouchmove="onVoiceTouchMove" 
+              bindtouchend="onVoiceTouchEnd"
+              bindtouchcancel="onVoiceTouchCancel">
+        <image class="voice-icon" src="/images/voice.png"></image>
+        <text class="voice-text">{{recordingText}}</text>
+      </button>
+      
+      <!-- 切换到文字模式按钮 -->
+      <image class="mode-switch-btn"
+             src="/images/keyboard.png"
+             bindtap="switchToText" />
+    </view>
+  </view>
+
   <!-- 当用户滚动时显示的"回到底部"按钮 -->
   <view class="scroll-to-bottom" bindtap="forceScrollToBottom" wx:if="{{showScrollToBottom}}">
     <image src="/images/arrow-down.png" class="arrow-down-icon"></image>
+  </view>
+
+  <!-- 语音录音悬浮层 -->
+  <view class="voice-modal" wx:if="{{showVoiceModal}}">
+    <view class="voice-modal-content {{isRecordingCanceling ? 'canceling' : ''}}">
+      <!-- 波形可视化 -->
+      <view class="waveform-container">
+        <view class="waveform-bars">
+          <view wx:for="{{waveformData}}" 
+                wx:key="index"
+                class="waveform-bar"
+                style="height: {{item}}%"></view>
+        </view>
+      </view>
+      
+      <!-- 录音信息 -->
+      <view class="recording-info">
+        <text class="recording-duration">{{recordingDuration}}s</text>
+        <text class="recording-hint">
+          {{isRecordingCanceling ? '松开手指，取消发送' : '正在录音...'}}
+        </text>
+      </view>
+      
+      <!-- 取消提示 -->
+      <view class="cancel-hint" wx:if="{{!isRecordingCanceling}}">
+        <image class="cancel-icon" src="/images/arrow-up.png"></image>
+        <text>上滑取消</text>
+      </view>
+    </view>
   </view>
 </view>
