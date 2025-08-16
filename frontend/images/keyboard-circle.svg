@@ -1,0 +1,23 @@
+<svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 圆形背景 -->
+  <circle cx="14" cy="14" r="14" fill="white"/>
+  <!-- 圆形边框 -->
+  <circle cx="14" cy="14" r="13.5" fill="none" stroke="#666" stroke-width="1"/>
+  
+  <!-- 键盘按键圆点（第一行） -->
+  <circle cx="9" cy="11" r="1" fill="#666"/>
+  <circle cx="12" cy="11" r="1" fill="#666"/>
+  <circle cx="15" cy="11" r="1" fill="#666"/>
+  <circle cx="18" cy="11" r="1" fill="#666"/>
+  
+  <!-- 键盘按键圆点（第二行） -->
+  <circle cx="9" cy="14" r="1" fill="#666"/>
+  <circle cx="12" cy="14" r="1" fill="#666"/>
+  <circle cx="15" cy="14" r="1" fill="#666"/>
+  <circle cx="18" cy="14" r="1" fill="#666"/>
+  
+  <!-- 键盘按键圆点（第三行） -->
+  <circle cx="10.5" cy="17" r="1" fill="#666"/>
+  <circle cx="13.5" cy="17" r="1" fill="#666"/>
+  <circle cx="16.5" cy="17" r="1" fill="#666"/>
+</svg>

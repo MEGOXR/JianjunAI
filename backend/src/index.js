@@ -215,8 +215,9 @@ wss.on('connection', async (ws, req) => {
           // 不要关闭连接，发送错误信息即可
           ws.send(JSON.stringify({ 
             type: 'error', 
-            data: '初始化失败', 
-            error: error.message 
+            error: '初始化失败',
+            details: error.message,
+            data: '初始化失败'
           }));
         }
         return;
@@ -233,7 +234,10 @@ wss.on('connection', async (ws, req) => {
       
       // 检查速率限制
       if (!SecurityMiddleware.checkRateLimit(ws.userId, 60000, 30)) { // 每分钟30条消息
-        ws.send(JSON.stringify({ error: '发送太频繁，请稍后再试' }));
+        ws.send(JSON.stringify({ 
+          error: '发送太频繁，请稍后再试',
+          details: '每分钟最多30条消息'
+        }));
         return;
       }
 
@@ -246,7 +250,10 @@ wss.on('connection', async (ws, req) => {
       }
     } catch (error) {
       console.error('WebSocket 错误:', error);
-      ws.send(JSON.stringify({ error: '服务器内部错误', details: error.message }));
+      ws.send(JSON.stringify({ 
+        error: '服务器内部错误', 
+        details: error.message || '未知错误'
+      }));
     }
   });
 

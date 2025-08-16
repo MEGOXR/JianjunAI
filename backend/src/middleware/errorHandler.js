@@ -86,6 +86,7 @@ class ErrorHandler {
         const errorMessage = this.getWebSocketErrorMessage(error);
         ws.send(JSON.stringify({
           error: errorMessage.error,
+          details: errorMessage.message,  // 前端期望 details 字段
           message: errorMessage.message,
           timestamp: Date.now()
         }));
@@ -148,7 +149,7 @@ class ErrorHandler {
     // Default error
     return {
       error: 'Server Error',
-      message: isDevelopment ? error.message : '服务器内部错误，请稍后再试。'
+      message: isDevelopment ? (error.message || 'Unknown error') : '服务器内部错误，请稍后再试。'
     };
   }
 

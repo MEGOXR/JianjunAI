@@ -1,33 +1,40 @@
 const fs = require('fs').promises;
 const path = require('path');
 
+// 环境变量读取辅助函数（处理 Azure App Service 的 APPSETTING_ 前缀）
+function getEnvVar(name) {
+  return process.env[name] || process.env[`APPSETTING_${name}`] || null;
+}
+
 // 动态导入 Azure Speech SDK（如果配置了密钥）
 let sdk = null;
-if (process.env.AZURE_SPEECH_KEY) {
+if (getEnvVar('AZURE_SPEECH_KEY')) {
   try {
     sdk = require('microsoft-cognitiveservices-speech-sdk');
     console.log('Azure Speech SDK 加载成功');
   } catch (error) {
-    console.warn('Azure Speech SDK 加载失败，将使用模拟识别:', error.message);
+    console.warn('Azure Speech SDK 加载失败:', error.message);
   }
 }
 
 class SpeechService {
   constructor() {
     // Azure Speech Service 配置
-    this.speechKey = process.env.AZURE_SPEECH_KEY;
-    this.speechRegion = process.env.AZURE_SPEECH_REGION || 'koreacentral';
-    this.language = process.env.AZURE_SPEECH_LANGUAGE || 'zh-CN';
+    this.speechKey = getEnvVar('AZURE_SPEECH_KEY');
+    this.speechRegion = getEnvVar('AZURE_SPEECH_REGION') || 'koreacentral';
+    this.speechEndpoint = getEnvVar('AZURE_SPEECH_ENDPOINT');
+    this.language = getEnvVar('AZURE_SPEECH_LANGUAGE') || 'zh-CN';
     
     if (!this.speechKey) {
-      console.warn('警告: AZURE_SPEECH_KEY 未配置，使用模拟语音识别');
+      console.warn('警告: AZURE_SPEECH_KEY 未配置');
     } else if (sdk) {
       console.log(`Azure Speech Service 已配置: 区域=${this.speechRegion}, 语言=${this.language}`);
     }
   }
 
   /**
-   * 将音频文件转换为文本
+   * 使用 PushAudioInputStream 处理音频文件
+   * 支持 MP3 格式通过推送流的方式
    * @param {string} audioFilePath - 音频文件路径
    * @returns {Promise<{success: boolean, text: string, confidence: number, duration: number}>}
    */
@@ -40,18 +47,16 @@ class SpeechService {
       const stats = await fs.stat(audioFilePath);
       const duration = await this.getAudioDuration(audioFilePath);
       
-      // 如果配置了 Azure Speech Key 且 SDK 加载成功，使用真实服务
-      if (this.speechKey && sdk) {
-        try {
-          return await this.azureSpeechToText(audioFilePath, duration);
-        } catch (error) {
-          console.error('Azure Speech Service 失败，降级到模拟识别:', error.message);
-          return this.simulateSpeechRecognition(duration);
-        }
-      } else {
-        // 使用模拟识别
-        return this.simulateSpeechRecognition(duration);
+      // 使用 Azure Speech Service 进行识别
+      if (!this.speechKey) {
+        throw new Error('Azure Speech Service 未配置');
       }
+      
+      if (!sdk) {
+        throw new Error('Azure Speech SDK 未加载');
+      }
+      
+      return await this.azureSpeechToText(audioFilePath, duration);
     } catch (error) {
       console.error('语音识别错误:', error);
       throw error;
@@ -64,36 +69,6 @@ class SpeechService {
         console.error('清理临时文件失败:', err);
       }
     }
-  }
-
-  /**
-   * 模拟语音识别（用于开发测试）
-   * @private
-   */
-  async simulateSpeechRecognition(duration) {
-    // 模拟处理延迟
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    // 生成模拟识别文本
-    const sampleTexts = [
-      '我想咨询一下双眼皮手术',
-      '请问隆鼻手术需要多长时间恢复',
-      '医生，我想了解一下面部填充的效果',
-      '请介绍一下你们医院的资质',
-      '手术后需要注意什么',
-      '费用大概是多少'
-    ];
-    
-    const randomText = sampleTexts[Math.floor(Math.random() * sampleTexts.length)];
-    
-    return {
-      success: true,
-      text: randomText,
-      confidence: 0.85 + Math.random() * 0.1, // 0.85-0.95
-      duration: duration,
-      language: this.language,
-      isSimulated: true // 标记为模拟结果
-    };
   }
 
   /**
@@ -121,10 +96,10 @@ class SpeechService {
    */
   async getAudioDuration(audioFilePath) {
     // 简单实现：基于文件大小估算
-    // MP3 文件约 48kbps 码率
+    // MP3 文件约 128kbps 码率
     const stats = await fs.stat(audioFilePath);
     const fileSizeInBytes = stats.size;
-    const bitRate = 48000 / 8; // 48kbps 转换为 bytes per second
+    const bitRate = 128000 / 8; // 128kbps 转换为 bytes per second
     const duration = fileSizeInBytes / bitRate;
     
     // 返回合理范围内的时长（1-60秒）
@@ -132,7 +107,8 @@ class SpeechService {
   }
 
   /**
-   * 集成真实的 Azure Speech Service
+   * 使用 Azure Speech Service 进行语音识别
+   * 使用 PushAudioInputStream 支持各种音频格式
    * @param {string} audioFilePath - 音频文件路径
    * @param {number} duration - 音频时长
    * @returns {Promise<Object>} 识别结果
@@ -145,6 +121,7 @@ class SpeechService {
     return new Promise(async (resolve, reject) => {
       try {
         // 配置语音识别
+        console.log(`[STT] 配置信息: Region=${this.speechRegion}, Language=${this.language}`);
         const speechConfig = sdk.SpeechConfig.fromSubscription(
           this.speechKey,
           this.speechRegion
@@ -154,21 +131,40 @@ class SpeechService {
         // 设置识别参数以提高准确性
         speechConfig.setProperty(
           sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs,
-          "5000"
+          "30000"  // 增加初始静默超时到30秒
         );
         speechConfig.setProperty(
           sdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs,
-          "1000"
+          "5000"   // 增加结束静默超时到5秒
         );
         
-        // 读取音频文件
+        // 读取音频文件数据
         const audioData = await fs.readFile(audioFilePath);
+        console.log(`[STT] 音频文件信息: 大小=${audioData.length}字节, 估算时长=${duration}秒`);
         
-        // 创建推送流和音频配置
-        const pushStream = sdk.AudioInputStream.createPushStream();
+        // 创建 PushAudioInputStream 用于处理各种格式
+        let audioFormat;
+        
+        // 判断文件格式并设置相应的音频格式
+        if (audioFilePath.toLowerCase().endsWith('.wav')) {
+          // WAV 格式：默认 PCM 16kHz
+          audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
+        } else if (audioFilePath.toLowerCase().endsWith('.pcm')) {
+          // PCM 格式：原始音频数据，16kHz, 16-bit, 单声道
+          audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
+          console.log('[STT] 使用 PCM 格式: 16kHz, 16-bit, 单声道');
+        } else {
+          // MP3 或其他格式：使用默认格式
+          audioFormat = sdk.AudioStreamFormat.getDefaultInputFormat();
+        }
+        
+        const pushStream = sdk.AudioInputStream.createPushStream(audioFormat);
+        
+        // 将音频数据推送到流中
         pushStream.write(audioData);
         pushStream.close();
         
+        // 创建音频配置
         const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
         
         // 创建识别器
@@ -199,18 +195,20 @@ class SpeechService {
             } else if (result.reason === sdk.ResultReason.NoMatch) {
               // 无法识别
               console.log('[STT] 无法识别语音内容');
+              console.log('[STT] NoMatch详细信息:', result.properties ? result.properties.getProperty(sdk.PropertyId.SpeechServiceResponse_JsonResult) : 'N/A');
               resolve({
                 success: false,
                 text: '',
                 confidence: 0,
                 duration: duration,
-                error: '无法识别语音内容，请说话清晰一些',
+                error: '无法识别语音内容，请说话清晰一些或尝试更长的录音',
                 isSimulated: false
               });
             } else {
               // 其他错误
-              console.error('[STT] 识别失败:', result.reason);
-              reject(new Error(`语音识别失败: ${result.reason}`));
+              console.error('[STT] 识别失败，原因:', result.reason);
+              console.error('[STT] 错误详情:', result.errorDetails || 'N/A');
+              reject(new Error(`语音识别失败: ${result.reason} - ${result.errorDetails}`));
             }
             
             recognizer.close();

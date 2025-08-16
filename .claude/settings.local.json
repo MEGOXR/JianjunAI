@@ -24,7 +24,13 @@
       "Bash(grep:*)",
       "Bash(del test-suggestions.js)",
       "Bash(git --version)",
-      "Bash(cmd /c:*)"
+      "Bash(cmd /c:*)",
+      "Bash(where node)",
+      "WebSearch",
+      "WebFetch(domain:www.flaticon.com)",
+      "WebFetch(domain:uxwing.com)",
+      "WebFetch(domain:www.svgrepo.com)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": []
   }

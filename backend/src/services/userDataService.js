@@ -44,7 +44,13 @@ class UserDataService {
   async loadUserData() {
     try {
       const data = await fs.readFile(this.userDataFile, 'utf8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      // 确保返回的是对象
+      if (typeof parsed !== 'object' || parsed === null) {
+        console.warn('用户数据不是有效对象，重置为空对象');
+        return {};
+      }
+      return parsed;
     } catch (error) {
       console.error('Failed to load user data:', error);
       return {};
@@ -67,7 +73,13 @@ class UserDataService {
 
   async updateUserData(userId, data) {
     this.validateUserId(userId);
-    const allUsers = await this.loadUserData();
+    let allUsers = await this.loadUserData();
+    
+    // 额外的安全检查，确保 allUsers 是对象
+    if (typeof allUsers !== 'object' || allUsers === null || Array.isArray(allUsers)) {
+      console.warn(`用户数据格式异常，重置为空对象。当前类型: ${typeof allUsers}, 值: ${allUsers}`);
+      allUsers = {};
+    }
     
     if (!allUsers[userId]) {
       allUsers[userId] = {

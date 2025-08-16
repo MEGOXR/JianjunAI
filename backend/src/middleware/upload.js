@@ -13,7 +13,16 @@ const storage = multer.diskStorage({
     cb(null, tempDir);
   },
   filename: (req, file, cb) => {
-    const uniqueName = `${uuidv4()}-${Date.now()}.mp3`;
+    // 根据格式参数或 MIME 类型确定扩展名
+    let ext = '.mp3';
+    if (req.body && req.body.format === 'pcm') {
+      ext = '.pcm';
+    } else if (file.mimetype === 'audio/wav') {
+      ext = '.wav';
+    } else if (file.mimetype === 'audio/pcm' || file.mimetype === 'application/octet-stream') {
+      ext = '.pcm';
+    }
+    const uniqueName = `${uuidv4()}-${Date.now()}${ext}`;
     cb(null, uniqueName);
   }
 });
@@ -26,7 +35,9 @@ const fileFilter = (req, file, cb) => {
     'audio/mp3',
     'audio/wav',
     'audio/x-m4a',
-    'audio/webm'
+    'audio/webm',
+    'audio/pcm',
+    'application/octet-stream'  // PCM 文件可能被识别为二进制流
   ];
   
   if (allowedMimeTypes.includes(file.mimetype)) {

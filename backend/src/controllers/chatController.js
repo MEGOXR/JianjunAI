@@ -461,6 +461,7 @@ exports.handleConnection = async (ws) => {
         ws.send(JSON.stringify({
           type: 'error',
           error: '初始化失败',
+          details: '连接初始化时遇到问题，但连接仍然可用',
           message: '连接初始化时遇到问题，但连接仍然可用'
         }));
       }

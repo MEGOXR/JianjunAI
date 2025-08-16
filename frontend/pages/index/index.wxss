@@ -11,7 +11,7 @@
 
 .chat-history {
   flex: 1;
-  padding: 10rpx 20rpx 200rpx;  /* Increase bottom padding */
+  padding: 10rpx 20rpx 220rpx;  /* 调整底部内边距适应新的输入框位置 */
   overflow-y: auto;
   margin-bottom: 0;
   scroll-behavior: smooth;
@@ -70,13 +70,13 @@
 
 .input-area {
   position: fixed;
-  bottom: 60rpx;
+  bottom: 80rpx;
   left: 20rpx;
   right: 20rpx;
-  background-color: white;
+  background-color: #ffffff;
   padding: 20rpx;
-  border-radius: 24rpx;
-  box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.1);
+  border-radius: 30rpx;
+  box-shadow: 0 2rpx 12rpx rgba(0,0,0,0.08);
   z-index: 100;
 }
 
@@ -88,15 +88,6 @@
 }
 
 /* 注释掉语音相关样式
-.voice-container {
-  display: flex;
-  position: relative;
-  justify-content: center;
-  align-items: center;
-  background-color: white;
-  width: 100%;
-  height: 72rpx;
-}
 */
 
 .input-length {
@@ -121,7 +112,7 @@
   line-height: 72rpx;  /* 使文本垂直居中 */
   border: none;       
   border-radius: 36rpx;
-  background-color: white;
+  background-color: #f5f5f5;
   box-sizing: border-box;
 }
 
@@ -134,11 +125,16 @@
   font-size: 28rpx;
   color: #ccc;         /* 根据需求调整 placeholder 颜色 */
   pointer-events: none; /* 点击时让事件穿透到 textarea */
+  transition: color 0.2s ease;
+}
+
+.custom-placeholder.recording {
+  color: #007AFF;      /* 录音时变为蓝色 */
 }
 
 
 .input-box:focus {
-  background-color: #f0f0f0;
+  background-color: #eeeeee;
 }
 
 .voice-btn {
@@ -155,38 +151,26 @@
   padding: 0;
 }
 
-.voice-container .mode-switch-btn {
-  position: absolute; /* Position absolutely within voice container */
-  right: 20rpx; /* Align to right with margin */
-  top: 50%;
-  transform: translateY(-50%); /* Center vertically */
-  width: 56rpx;
-  height: 56rpx;
-  padding: 10rpx;
-  z-index: 2; /* Ensure it's above the voice button */
-}
 
 .voice-btn:active {
   background-color: #f0f0f0;
 }
 
-.mode-switch-btn {
-  width: 56rpx;
-  height: 56rpx;
-  padding: 20rpx;
-  transition: opacity 0.3s ease;
-}
 
 .send-btn {
   width: 56rpx;
   height: 56rpx;
-  padding: 10rpx;
-  color: #007AFF;
-  transition: opacity 0.3s ease;
+  padding: 14rpx;
+  background-color: #007AFF;
+  border-radius: 28rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.3s ease;
 }
 
 .send-btn:active {
-  opacity: 0.6;
+  background-color: #0051D5;
 }
 
 .date-label {
@@ -229,7 +213,7 @@
   position: fixed;
   left: 50%;
   transform: translateX(-50%);
-  bottom: 220rpx; /* 位于输入框正上方 */
+  bottom: 220rpx; /* 位于输入框正上方，适应新的底部距离 */
   width: 70rpx;
   height: 70rpx;
   background-color: rgba(255, 255, 255, 0.9);
@@ -374,36 +358,36 @@
 /* 语音输入区域 */
 .voice-input-area {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: white;
-  border-top: 1px solid #e5e5e5;
+  bottom: 80rpx;
+  left: 20rpx;
+  right: 20rpx;
+  background-color: #ffffff;
   padding: 20rpx;
+  border-radius: 30rpx;
+  box-shadow: 0 2rpx 12rpx rgba(0,0,0,0.08);
   z-index: 100;
 }
 
 .voice-container {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 20rpx;
+  gap: 20rpx;
+  height: 72rpx;
 }
 
 /* 语音按钮 */
 .voice-btn {
   flex: 1;
-  height: 100rpx;
-  background: linear-gradient(135deg, #007AFF, #0051D5);
-  border-radius: 50rpx;
+  height: 72rpx;
+  background: transparent;
+  border-radius: 36rpx;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-right: 20rpx;
   transition: all 0.2s ease;
   transform-origin: center;
   border: none;
-  box-shadow: 0 4rpx 12rpx rgba(0, 122, 255, 0.3);
+  color: #333;
 }
 
 .voice-btn::after {
@@ -411,31 +395,27 @@
 }
 
 .voice-btn.recording {
-  transform: scale(1.05);
-  background: linear-gradient(135deg, #FF6B6B, #FF8E53);
-  box-shadow: 0 8rpx 24rpx rgba(255, 107, 107, 0.4);
+  background: transparent;
+  color: #007AFF;
   animation: recordingPulse 1.5s ease-in-out infinite;
 }
 
 @keyframes recordingPulse {
   0%, 100% { 
-    transform: scale(1.05); 
-    box-shadow: 0 8rpx 24rpx rgba(255, 107, 107, 0.4);
+    opacity: 1;
   }
   50% { 
-    transform: scale(1.1); 
-    box-shadow: 0 12rpx 32rpx rgba(255, 107, 107, 0.5);
+    opacity: 0.7;
   }
 }
 
 .voice-icon {
-  width: 48rpx;
-  height: 48rpx;
-  margin-right: 12rpx;
+  width: 32rpx;
+  height: 32rpx;
+  margin-right: 8rpx;
 }
 
 .voice-text {
-  color: white;
   font-size: 32rpx;
   font-weight: 500;
 }
@@ -444,22 +424,33 @@
 .mode-switch-btn {
   width: 56rpx;
   height: 56rpx;
-  padding: 10rpx;
-}
-
-/* 语音录音悬浮层 */
-.voice-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
+  padding: 14rpx;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: opacity 0.2s ease;
+}
+
+.mode-switch-btn:active {
+  opacity: 0.7;
+}
+
+/* 语音录音悬浮层 - 豆包风格下方半圆渐变 */
+.voice-modal {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 320rpx;
+  background: linear-gradient(to top, #4A90E2 0%, #357ABD 40%, rgba(69, 144, 226, 0.8) 70%, rgba(69, 144, 226, 0.4) 90%, transparent 100%);
+  border-radius: 50% 50% 0 0 / 60% 60% 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   z-index: 1000;
-  animation: modalFadeIn 0.3s ease-out;
+  animation: modalSlideUp 0.3s ease-out;
+  padding-bottom: 60rpx;
 }
 
 @keyframes modalFadeIn {
@@ -472,11 +463,14 @@
 }
 
 .voice-modal-content {
-  background: white;
-  border-radius: 24rpx;
-  padding: 48rpx;
-  width: 560rpx;
-  animation: modalSlideUp 0.3s ease-out;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   transition: all 0.3s ease;
 }
 
@@ -491,8 +485,8 @@
   }
 }
 
-.voice-modal-content.canceling {
-  background: linear-gradient(135deg, #FF6B6B, #FF8E53);
+.voice-modal.canceling {
+  background: linear-gradient(to top, #FF6B6B 0%, #FF8E53 40%, rgba(255, 107, 107, 0.8) 70%, rgba(255, 107, 107, 0.4) 90%, transparent 100%);
   animation: cancelPulse 0.3s ease;
 }
 
@@ -507,8 +501,8 @@
 
 /* 波形容器 */
 .waveform-container {
-  height: 120rpx;
-  margin-bottom: 32rpx;
+  height: 80rpx;
+  margin-bottom: 20rpx;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -522,66 +516,53 @@
 }
 
 .waveform-bar {
-  width: 8rpx;
-  background: linear-gradient(to top, #007AFF, #40A9FF);
-  border-radius: 4rpx;
+  width: 6rpx;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 3rpx;
   transition: height 0.1s ease;
-  animation: waveformGlow 0.5s ease-in-out infinite alternate;
+  animation: waveformGlow 0.8s ease-in-out infinite alternate;
+  margin: 0 2rpx;
 }
 
 @keyframes waveformGlow {
   from { 
-    opacity: 0.7; 
+    opacity: 0.6; 
   }
   to { 
     opacity: 1; 
   }
 }
 
-.voice-modal-content.canceling .waveform-bar {
-  background: linear-gradient(to top, #fff, #ffcccc);
+.voice-modal.canceling .waveform-bar {
+  background: rgba(255, 255, 255, 0.8);
 }
 
 /* 录音信息 */
 .recording-info {
   text-align: center;
-  margin-bottom: 24rpx;
+  margin-bottom: 20rpx;
+  order: -1;
 }
 
 .recording-duration {
-  display: block;
-  font-size: 48rpx;
-  font-weight: bold;
-  color: #333;
-  margin-bottom: 12rpx;
-}
-
-.voice-modal-content.canceling .recording-duration {
-  color: white;
+  display: none;
 }
 
 .recording-hint {
   display: block;
   font-size: 28rpx;
-  color: #666;
-}
-
-.voice-modal-content.canceling .recording-hint {
   color: white;
-  font-weight: 500;
+  font-weight: 400;
+  text-shadow: 0 1rpx 2rpx rgba(0, 0, 0, 0.3);
 }
 
 /* 取消提示 */
 .cancel-hint {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8rpx;
-  color: #999;
-  font-size: 24rpx;
+  display: none;
 }
 
 .cancel-icon {
-  width: 32rpx;
-  height: 32rpx;
+  width: 36rpx;
+  height: 36rpx;
+  filter: brightness(0) invert(1);
 }

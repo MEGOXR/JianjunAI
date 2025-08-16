@@ -18,7 +18,9 @@ Page({
     waveformData: [],            // 波形数据
     recordingStartY: 0,          // 触摸开始Y坐标
     showVoiceModal: false,       // 显示录音悬浮层
-    recordingText: '按住说话'    // 录音按钮文字
+    recordingText: '按住说话',   // 录音按钮文字
+    isInputRecording: false,     // 输入框是否正在录音
+    keyboardHeight: 0            // 键盘高度
   },
 
   onLoad: function() {
@@ -38,8 +40,8 @@ Page({
     // 流式渲染的缓冲和节流控制器
     this._stream = { 
       buf: '',             // 缓冲区
-      timer: null,           // 节流定时器
-      targetIndex: null      // 当前正在接收流的message索引
+      timer: null,         // 节流定时器
+      targetIndex: null    // 当前正在接收流的message索引
     };
 
     // 【优化③】一次性初始化录音管理器并注册监听
@@ -79,7 +81,16 @@ Page({
     this.userId = userId; // 存到实例属性
 
     // 【优化：历史消息裁剪】
-    const savedMessages = wx.getStorageSync('messages') || [];
+    let savedMessages = wx.getStorageSync('messages') || [];
+    
+    // 清理所有残留的加载消息
+    const beforeCount = savedMessages.length;
+    savedMessages = savedMessages.filter(msg => !msg.isLoading);
+    if (beforeCount > savedMessages.length) {
+      console.log(`启动时清理了 ${beforeCount - savedMessages.length} 个残留的加载消息`);
+      wx.setStorageSync('messages', savedMessages);
+    }
+    
     this.setData({ 
       messages: this.trimMessages(this.formatMessages(savedMessages))
     }, () => {
@@ -454,17 +465,21 @@ Page({
       
       // 处理错误消息
       if (data.error) {
-        console.error('收到服务器错误:', data.error, data.details);
+        const errorMsg = data.error || 'Server Error';
+        const details = data.details || data.message || '未知错误';
+        console.error('收到服务器错误:', errorMsg, details);
         this.setData({ 
           isConnecting: false,
           isGenerating: false
         });
         
-        // 移除加载消息
+        // 移除所有加载消息
         let messages = [...this.data.messages];
-        const loadingIndex = messages.findIndex(msg => msg.isLoading);
-        if (loadingIndex !== -1) {
-          messages.splice(loadingIndex, 1);
+        const beforeCount = messages.length;
+        messages = messages.filter(msg => !msg.isLoading);
+        const removedCount = beforeCount - messages.length;
+        if (removedCount > 0) {
+          console.log(`错误处理：已移除 ${removedCount} 个加载消息`);
           this.setData({ messages });
         }
         wx.showToast({ 
@@ -479,14 +494,16 @@ Page({
       if (data.data) {
         // 如果是第一个分片，先移除加载消息并创建真实的AI消息
         if (this._stream.targetIndex == null) {
-          // 移除加载消息
+          // 移除所有加载消息（可能有多个残留的）
           let currentMessages = [...this.data.messages];
-          const loadingIndex = currentMessages.findIndex(msg => msg.isLoading);
-          if (loadingIndex !== -1) {
-            currentMessages.splice(loadingIndex, 1);
+          const beforeCount = currentMessages.length;
+          currentMessages = currentMessages.filter(msg => !msg.isLoading);
+          const removedCount = beforeCount - currentMessages.length;
+          if (removedCount > 0) {
+            console.log(`已移除 ${removedCount} 个加载消息`);
           }
           
-          // 设置生成状态为false
+          // 设置生成状态为false，并确保没有加载中的消息
           this.setData({ 
             messages: currentMessages,
             isGenerating: false 
@@ -755,6 +772,11 @@ Page({
    */
   handleKeyboardHeightChange: function(res) {
     console.log('键盘高度变化:', res.height);
+    
+    // 更新键盘高度状态
+    this.setData({
+      keyboardHeight: res.height
+    });
 
     if (!this.data.userHasScrolledUp) {
       // 使用一个短暂的延迟，等待 scroll-view 的高度完成变化
@@ -778,6 +800,8 @@ Page({
     if (this._stream.timer) clearTimeout(this._stream.timer);
     if (this.recordingTimer) clearInterval(this.recordingTimer);
     if (this.waveformTimer) clearInterval(this.waveformTimer);
+    if (this.inputLongPressTimer) clearTimeout(this.inputLongPressTimer);
+    if (this.voiceLongPressTimer) clearTimeout(this.voiceLongPressTimer);
 
     // 【新增】注销键盘监听
     wx.offKeyboardHeightChange(this.handleKeyboardHeightChange);
@@ -895,7 +919,8 @@ Page({
           sampleRate: 16000,
           numberOfChannels: 1,
           encodeBitRate: 48000,
-          format: 'mp3'
+          format: 'pcm',  // 使用 PCM 格式
+          frameSize: 2    // 每 2KB 触发回调
         });
       },
       fail: () => {
@@ -1188,10 +1213,12 @@ Page({
       isRecordingCanceling: false
     });
     
-    // 检查录音权限
-    this.checkRecordingPermission(() => {
-      this.startVoiceRecording();
-    });
+    // 设置长按定时器（200ms后开始录音）
+    this.voiceLongPressTimer = setTimeout(() => {
+      this.checkRecordingPermission(() => {
+        this.startVoiceRecording();
+      });
+    }, 200);
   },
 
   // 语音按钮触摸移动
@@ -1206,8 +1233,7 @@ Page({
     
     if (shouldCancel !== this.data.isRecordingCanceling) {
       this.setData({
-        isRecordingCanceling: shouldCancel,
-        recordingText: shouldCancel ? '松开取消' : '正在录音...'
+        isRecordingCanceling: shouldCancel
       });
       
       // 进入取消区域时震动反馈
@@ -1219,6 +1245,12 @@ Page({
 
   // 语音按钮触摸结束
   onVoiceTouchEnd: function(e) {
+    // 清除长按定时器
+    if (this.voiceLongPressTimer) {
+      clearTimeout(this.voiceLongPressTimer);
+      this.voiceLongPressTimer = null;
+    }
+    
     if (!this.data.isRecording) return;
     
     if (this.data.isRecordingCanceling) {
@@ -1228,13 +1260,18 @@ Page({
     }
     
     this.setData({
-      isRecordingCanceling: false,
-      recordingText: '按住说话'
+      isRecordingCanceling: false
     });
   },
 
   // 语音按钮触摸取消
   onVoiceTouchCancel: function(e) {
+    // 清除长按定时器
+    if (this.voiceLongPressTimer) {
+      clearTimeout(this.voiceLongPressTimer);
+      this.voiceLongPressTimer = null;
+    }
+    
     if (this.data.isRecording) {
       this.cancelVoiceRecording();
     }
@@ -1307,14 +1344,14 @@ Page({
   startVoiceRecording: function() {
     const recorderManager = this.recorderManager;
     
-    // 配置录音选项
+    // 配置录音选项（使用 PCM 格式，最佳兼容性）
     const options = {
       duration: 60000,           // 最长60秒
-      sampleRate: 16000,         // 16kHz采样率
+      sampleRate: 16000,         // 16kHz采样率（Azure Speech Service 标准）
       numberOfChannels: 1,       // 单声道
-      encodeBitRate: 48000,      // 48kbps码率
-      format: 'mp3',             // MP3格式
-      frameSize: 1               // 用于实时音量监控
+      encodeBitRate: 48000,      // PCM 不需要太高码率
+      format: 'pcm',             // PCM 格式 - 原始音频数据
+      frameSize: 2               // 每 2KB 数据触发一次回调（用于实时传输）
     };
     
     // 开始录音
@@ -1325,8 +1362,7 @@ Page({
       isRecording: true,
       showVoiceModal: true,
       recordingDuration: 0,
-      waveformData: new Array(20).fill(10), // 初始化波形
-      recordingText: '正在录音...'
+      waveformData: new Array(20).fill(10) // 初始化波形
     });
     
     // 开始计时
@@ -1439,7 +1475,7 @@ Page({
       },
       formData: {
         userId: this.userId,
-        format: 'mp3',
+        format: 'pcm',  // 更新为 PCM 格式
         sampleRate: 16000
       },
       success: (res) => {
@@ -1468,51 +1504,155 @@ Page({
   handleSTTSuccess: function(text, confidence) {
     console.log('STT结果:', text, '置信度:', confidence);
     
-    // 低置信度提示
+    // 低置信度时显示提示，但不阻止发送
     if (confidence < 0.7) {
       wx.showToast({
         title: '识别可能不准确',
         icon: 'none',
-        duration: 1500
+        duration: 1000
       });
     }
     
-    // 显示识别结果供确认
-    this.showSTTConfirmation(text);
-  },
-
-  // 显示STT结果确认对话框
-  showSTTConfirmation: function(text) {
-    wx.showModal({
-      title: '识别结果',
-      content: `"${text}"\n\n确认发送这条消息吗？`,
-      confirmText: '发送',
-      cancelText: '编辑',
-      success: (res) => {
-        if (res.confirm) {
-          // 直接发送
-          this.setData({ userInput: text });
-          this.sendMessage();
-        } else {
-          // 让用户编辑
-          this.setData({ 
-            userInput: text,
-            isVoiceMode: false // 切换到文字模式编辑
-          });
-        }
-      }
-    });
+    // 直接发送识别结果，不需要用户确认
+    this.sendVoiceMessage(text);
   },
 
   // 处理STT错误
   handleSTTError: function(errorMessage) {
     console.error('STT错误:', errorMessage);
     
-    wx.showModal({
+    wx.showToast({
       title: '语音识别失败',
-      content: errorMessage + '\n\n请重新录音或切换到文字输入',
-      showCancel: false,
-      confirmText: '好的'
+      icon: 'none',
+      duration: 2000
+    });
+  },
+
+  // ==================== 输入框语音功能 ====================
+  
+  // 输入框触摸开始
+  onInputTouchStart: function(e) {
+    // 只有在没有输入内容且键盘未弹出时才启用按住说话功能
+    if (this.data.userInput || this.data.keyboardHeight > 0) {
+      return;
+    }
+    
+    this.inputTouchStartTime = Date.now();
+    this.inputTouchStartY = e.touches[0].clientY;
+    
+    // 设置长按定时器（200ms后开始录音）
+    this.inputLongPressTimer = setTimeout(() => {
+      this.startInputRecording();
+    }, 200);
+  },
+
+  // 输入框触摸移动
+  onInputTouchMove: function(e) {
+    if (!this.data.isInputRecording || this.data.userInput || this.data.keyboardHeight > 0) return;
+    
+    const currentY = e.touches[0].clientY;
+    const deltaY = this.inputTouchStartY - currentY;
+    const cancelThreshold = 100;
+    
+    const shouldCancel = deltaY > cancelThreshold;
+    
+    if (shouldCancel !== this.data.isRecordingCanceling) {
+      this.setData({
+        isRecordingCanceling: shouldCancel
+      });
+      
+      if (shouldCancel) {
+        wx.vibrateShort();
+      }
+    }
+  },
+
+  // 输入框触摸结束
+  onInputTouchEnd: function(e) {
+    // 清除长按定时器
+    if (this.inputLongPressTimer) {
+      clearTimeout(this.inputLongPressTimer);
+      this.inputLongPressTimer = null;
+    }
+    
+    if (!this.data.isInputRecording) {
+      return;
+    }
+    
+    if (this.data.isRecordingCanceling) {
+      this.cancelInputRecording();
+    } else {
+      this.stopInputRecording();
+    }
+  },
+
+  // 输入框触摸取消
+  onInputTouchCancel: function(e) {
+    if (this.inputLongPressTimer) {
+      clearTimeout(this.inputLongPressTimer);
+      this.inputLongPressTimer = null;
+    }
+    
+    if (this.data.isInputRecording) {
+      this.cancelInputRecording();
+    }
+  },
+
+  // 开始输入框录音
+  startInputRecording: function() {
+    this.checkRecordingPermission(() => {
+      this.setData({
+        isInputRecording: true,
+        showVoiceModal: true,
+        recordingDuration: 0,
+        waveformData: new Array(20).fill(10)
+      });
+      
+      this.recorderManager.start({
+        duration: 60000,
+        sampleRate: 16000,
+        numberOfChannels: 1,
+        encodeBitRate: 48000,
+        format: 'pcm',
+        frameSize: 2
+      });
+      
+      this.startRecordingTimer();
+      this.startWaveformAnimation();
+    });
+  },
+
+  // 停止输入框录音
+  stopInputRecording: function() {
+    this.recorderManager.stop();
+    this.stopRecordingTimer();
+    this.stopWaveformAnimation();
+    
+    this.setData({
+      isInputRecording: false,
+      showVoiceModal: false,
+      isRecordingCanceling: false
+    });
+  },
+
+  // 取消输入框录音
+  cancelInputRecording: function() {
+    this.recorderManager.stop();
+    this.stopRecordingTimer();
+    this.stopWaveformAnimation();
+    
+    this.isCancelingRecording = true;
+    
+    this.setData({
+      isInputRecording: false,
+      showVoiceModal: false,
+      isRecordingCanceling: false
+    });
+    
+    wx.showToast({
+      title: '录音已取消',
+      icon: 'none',
+      duration: 1500
     });
   }
 });

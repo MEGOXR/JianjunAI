@@ -62,7 +62,11 @@
   <!-- 文字输入模式 -->
   <view class="input-area" wx:if="{{!isVoiceMode}}">
     <view class="input-container">
-      <view class="input-wrapper">
+      <view class="input-wrapper"
+            bindtouchstart="onInputTouchStart"
+            bindtouchmove="onInputTouchMove"
+            bindtouchend="onInputTouchEnd"
+            bindtouchcancel="onInputTouchCancel">
         <input
           class="input-box"
           placeholder=""
@@ -76,7 +80,9 @@
           adjust-position="{{true}}"
         />
         <!-- 自定义 placeholder，当没有输入内容时显示 -->
-        <view wx:if="{{!userInput}}" class="custom-placeholder">请输入您的问题</view>
+        <view wx:if="{{!userInput}}" class="custom-placeholder {{isInputRecording ? 'recording' : ''}}">
+          {{isInputRecording ? recordingText : (keyboardHeight > 0 ? '发消息' : '发消息或按住说话')}}
+        </view>
       </view>
       <image 
         wx:if="{{!userInput}}"
@@ -96,19 +102,21 @@
   <!-- 语音输入模式 -->
   <view class="voice-input-area" wx:if="{{isVoiceMode}}">
     <view class="voice-container">
+      <!-- 占位元素保持布局平衡 -->
+      <view style="width: 56rpx; height: 56rpx;"></view>
+      
       <!-- 按住说话按钮 -->
       <button class="voice-btn {{isRecording ? 'recording' : ''}}"
               bindtouchstart="onVoiceTouchStart"
               bindtouchmove="onVoiceTouchMove" 
               bindtouchend="onVoiceTouchEnd"
               bindtouchcancel="onVoiceTouchCancel">
-        <image class="voice-icon" src="/images/voice.png"></image>
         <text class="voice-text">{{recordingText}}</text>
       </button>
       
-      <!-- 切换到文字模式按钮 -->
+      <!-- 键盘按钮（右侧） -->
       <image class="mode-switch-btn"
-             src="/images/keyboard.png"
+             src="/images/keyboard-circle.svg"
              bindtap="switchToText" />
     </view>
   </view>
@@ -119,8 +127,8 @@
   </view>
 
   <!-- 语音录音悬浮层 -->
-  <view class="voice-modal" wx:if="{{showVoiceModal}}">
-    <view class="voice-modal-content {{isRecordingCanceling ? 'canceling' : ''}}">
+  <view class="voice-modal {{isRecordingCanceling ? 'canceling' : ''}}" wx:if="{{showVoiceModal}}">
+    <view class="voice-modal-content">
       <!-- 波形可视化 -->
       <view class="waveform-container">
         <view class="waveform-bars">
@@ -132,11 +140,9 @@
       </view>
       
       <!-- 录音信息 -->
-      <view class="recording-info">
+      <view class="recording-info" wx:if="{{!isRecordingCanceling}}">
         <text class="recording-duration">{{recordingDuration}}s</text>
-        <text class="recording-hint">
-          {{isRecordingCanceling ? '松开手指，取消发送' : '正在录音...'}}
-        </text>
+        <text class="recording-hint">松手发送，上移取消</text>
       </view>
       
       <!-- 取消提示 -->
