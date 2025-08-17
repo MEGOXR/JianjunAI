@@ -4,7 +4,7 @@
  */
 
 // 当前环境: 'local' | 'dev' | 'prod'
-const currentEnv = 'dev';
+const currentEnv = 'prod';
 
 // 环境配置
 const envConfig = {
