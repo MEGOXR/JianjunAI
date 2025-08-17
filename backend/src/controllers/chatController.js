@@ -156,46 +156,57 @@ exports.sendMessage = async (ws, prompt) => {
     const userId = getUserId(ws);
     console.log('用户ID:', userId);
     
-    // 获取用户数据
-    const userData = await userDataService.getUserData(userId);
+    // 获取用户数据（非阻塞）
+    const userDataPromise = userDataService.getUserData(userId);
     
-    // 检查是否需要更新名字
-    const currentName = userData?.userInfo?.extractedName;
-    if (!currentName || await nameExtractorService.shouldUpdateName(currentName, prompt)) {
-      // 获取对话历史用于名字提取
-      const historyObj = chatHistories.get(userId);
-      const history = historyObj ? historyObj.messages || [] : [];
-      const messagesForExtraction = [...history, { role: 'user', content: prompt }];
-      
-      // 使用LLM提取名字
-      const extractedName = await nameExtractorService.extractNameFromConversation(messagesForExtraction);
-      if (extractedName) {
-        await userDataService.updateUserInfo(userId, { extractedName });
-        console.log(`提取到用户名字: ${extractedName}`);
+    // 异步处理名字提取，不阻塞主流程
+    const handleNameExtraction = async () => {
+      try {
+        const userData = await userDataPromise;
+        const currentName = userData?.userInfo?.extractedName;
+        if (!currentName || await nameExtractorService.shouldUpdateName(currentName, prompt)) {
+          const historyObj = chatHistories.get(userId);
+          const history = historyObj ? historyObj.messages || [] : [];
+          const messagesForExtraction = [...history, { role: 'user', content: prompt }];
+          
+          const extractedName = await nameExtractorService.extractNameFromConversation(messagesForExtraction);
+          if (extractedName) {
+            await userDataService.updateUserInfo(userId, { extractedName });
+            console.log(`提取到用户名字: ${extractedName}`);
+          }
+        }
+      } catch (error) {
+        console.error('名字提取失败（后台处理）:', error);
       }
-    }
+    };
+    
+    // 启动后台名字提取（不等待）
+    handleNameExtraction();
     
     // 获取或初始化用户的对话历史
     if (!chatHistories.has(userId)) {
-      // 从持久化存储恢复历史记录
-      const savedHistory = userData?.chatHistory || [];
+      // 异步获取用户数据，但不阻塞历史记录初始化
+      userDataPromise.then(userData => {
+        const savedHistory = userData?.chatHistory || [];
+        
+        if (savedHistory.length > 0 && !chatHistories.has(userId)) {
+          chatHistories.set(userId, {
+            messages: savedHistory,
+            lastAccess: Date.now()
+          });
+        }
+      }).catch(console.error);
       
-      if (savedHistory.length > 0) {
-        chatHistories.set(userId, {
-          messages: savedHistory,
-          lastAccess: Date.now()
-        });
-      } else {
-        chatHistories.set(userId, {
-          messages: [
-            {
-              role: "system",
-              content: promptService.getSystemPrompt()
-            }
-          ],
-          lastAccess: Date.now()
-        });
-      }
+      // 立即使用默认历史记录，避免等待文件读取
+      chatHistories.set(userId, {
+        messages: [
+          {
+            role: "system",
+            content: promptService.getSystemPrompt()
+          }
+        ],
+        lastAccess: Date.now()
+      });
     }
     
     // 更新最后访问时间
@@ -355,25 +366,40 @@ exports.sendMessage = async (ws, prompt) => {
       }
     }
 
-    // 生成建议问题
-    console.log('开始生成建议问题...');
-    let suggestions = [];
-    try {
-      suggestions = await suggestionService.generateSuggestions(history, cleanedResponse);
-      console.log('建议问题生成完成:', suggestions);
-    } catch (error) {
-      console.error('生成建议问题失败:', error);
-      // 如果生成失败，使用备用建议问题
-      suggestions = suggestionService.getFallbackSuggestions();
-      console.log('使用备用建议问题:', suggestions);
-    }
+    // 异步生成建议问题，不阻塞done消息
+    const generateSuggestionsAsync = async () => {
+      try {
+        const suggestions = await suggestionService.generateSuggestions(history, cleanedResponse);
+        console.log('建议问题生成完成:', suggestions);
+        
+        // 发送建议问题
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ 
+            type: 'suggestions',
+            suggestions: suggestions
+          }));
+        }
+      } catch (error) {
+        console.error('生成建议问题失败:', error);
+        // 如果生成失败，使用备用建议问题
+        const suggestions = suggestionService.getFallbackSuggestions();
+        console.log('使用备用建议问题:', suggestions);
+        
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ 
+            type: 'suggestions',
+            suggestions: suggestions
+          }));
+        }
+      }
+    };
 
-    console.log('发送done标记和建议问题给客户端');
-    ws.send(JSON.stringify({ 
-      done: true,
-      suggestions: suggestions
-    }));
-    console.log('done标记和建议问题发送完成');
+    console.log('发送done标记给客户端');
+    ws.send(JSON.stringify({ done: true }));
+    console.log('done标记发送完成');
+    
+    // 后台生成建议问题
+    generateSuggestionsAsync();
   } catch (error) {
     console.error("Azure OpenAI 调用出错:", error);
     ErrorHandler.handleWebSocketError(ws, error, 'Azure OpenAI Chat');
@@ -428,29 +454,48 @@ exports.handleConnection = async (ws) => {
     const userId = getUserId(ws);
     console.log('获取用户ID:', userId);
     
-    let userData = await userDataService.getUserData(userId);
-    console.log('获取用户数据成功');
+    // 异步处理用户数据和问候语，不阻塞连接确认
+    const handleGreetingAsync = async () => {
+      try {
+        let userData = await userDataService.getUserData(userId);
+        console.log('获取用户数据成功');
+        
+        // 生成智能问候语（基于时间判断是否需要）
+        const greeting = await greetingService.generateGreeting(userData);
+        
+        // 更新用户最后访问时间（非阻塞）
+        userDataService.updateUserInfo(userId, { lastVisitTime: Date.now() })
+          .then(() => console.log('更新用户信息成功'))
+          .catch(err => console.error('更新用户信息失败:', err));
+        
+        // 仅在需要时发送问候消息
+        if (greeting && ws.readyState === ws.OPEN) {
+          console.log('生成问候语成功:', greeting.substring(0, 50) + '...');
+          ws.send(JSON.stringify({
+            type: 'greeting',
+            data: greeting,
+            userId: userId
+          }));
+          console.log('问候消息发送成功');
+        } else {
+          console.log('用户24小时内访问过或连接已断开，跳过问候消息');
+        }
+      } catch (error) {
+        console.error('异步问候语处理失败:', error);
+      }
+    };
     
-    // 生成智能问候语（基于时间判断是否需要）
-    // 在更新用户信息之前检查是否需要问候语
-    const greeting = await greetingService.generateGreeting(userData);
-    
-    // 更新用户最后访问时间
-    await userDataService.updateUserInfo(userId, { lastVisitTime: Date.now() });
-    console.log('更新用户信息成功');
-    
-    // 仅在需要时发送问候消息
-    if (greeting) {
-      console.log('生成问候语成功:', greeting.substring(0, 50) + '...');
+    // 立即发送连接确认
+    if (ws.readyState === ws.OPEN) {
       ws.send(JSON.stringify({
-        type: 'greeting',
-        data: greeting,
-        userId: userId
+        type: 'connected',
+        userId: userId,
+        timestamp: new Date().toISOString()
       }));
-      console.log('问候消息发送成功');
-    } else {
-      console.log('用户24小时内访问过，跳过问候消息');
     }
+    
+    // 异步处理问候语
+    handleGreetingAsync();
     
     return userId;
   } catch (error) {

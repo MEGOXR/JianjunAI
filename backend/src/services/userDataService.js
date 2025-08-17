@@ -5,6 +5,10 @@ class UserDataService {
   constructor() {
     this.dataDir = path.join(__dirname, '../../data');
     this.userDataFile = path.join(this.dataDir, 'users.json');
+    this.cache = new Map(); // 内存缓存
+    this.cacheTimeout = 5 * 60 * 1000; // 5分钟缓存过期
+    this.lastCacheUpdate = 0;
+    this.pendingWrites = new Map(); // 防止并发写入
     this.initializeDataStore();
   }
   
@@ -42,6 +46,16 @@ class UserDataService {
   }
 
   async loadUserData() {
+    // 检查缓存是否有效
+    const now = Date.now();
+    if (this.cache.size > 0 && (now - this.lastCacheUpdate) < this.cacheTimeout) {
+      const result = {};
+      for (const [key, value] of this.cache.entries()) {
+        result[key] = value;
+      }
+      return result;
+    }
+    
     try {
       const data = await fs.readFile(this.userDataFile, 'utf8');
       const parsed = JSON.parse(data);
@@ -50,6 +64,14 @@ class UserDataService {
         console.warn('用户数据不是有效对象，重置为空对象');
         return {};
       }
+      
+      // 更新缓存
+      this.cache.clear();
+      for (const [key, value] of Object.entries(parsed)) {
+        this.cache.set(key, value);
+      }
+      this.lastCacheUpdate = now;
+      
       return parsed;
     } catch (error) {
       console.error('Failed to load user data:', error);
@@ -60,6 +82,14 @@ class UserDataService {
   async saveUserData(userData) {
     try {
       await fs.writeFile(this.userDataFile, JSON.stringify(userData, null, 2), 'utf8');
+      
+      // 更新缓存
+      this.cache.clear();
+      for (const [key, value] of Object.entries(userData)) {
+        this.cache.set(key, value);
+      }
+      this.lastCacheUpdate = Date.now();
+      
     } catch (error) {
       console.error('Failed to save user data:', error);
     }
@@ -67,6 +97,12 @@ class UserDataService {
 
   async getUserData(userId) {
     this.validateUserId(userId);
+    
+    // 首先尝试从缓存获取
+    if (this.cache.has(userId) && (Date.now() - this.lastCacheUpdate) < this.cacheTimeout) {
+      return this.cache.get(userId) || null;
+    }
+    
     const allUsers = await this.loadUserData();
     return allUsers[userId] || null;
   }

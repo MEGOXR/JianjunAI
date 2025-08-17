@@ -4,13 +4,19 @@ const { AzureOpenAI } = require('openai');
 
 class GreetingService {
   constructor() {
-    // 初始化Azure OpenAI客户端
-    this.openai = new AzureOpenAI({
-      apiKey: process.env.AZURE_OPENAI_API_KEY,
-      endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-      apiVersion: process.env.OPENAI_API_VERSION,
-      deployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
-    });
+    this.openai = null; // 延迟初始化
+  }
+  
+  getOpenAIClient() {
+    if (!this.openai) {
+      this.openai = new AzureOpenAI({
+        apiKey: process.env.AZURE_OPENAI_API_KEY,
+        endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+        apiVersion: process.env.OPENAI_API_VERSION,
+        deployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
+      });
+    }
+    return this.openai;
   }
 
   async generateGreeting(userData) {
@@ -103,7 +109,7 @@ ${recentMessages}
 
 话题总结：`;
 
-      const response = await this.openai.chat.completions.create({
+      const response = await this.getOpenAIClient().chat.completions.create({
         model: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 50,
