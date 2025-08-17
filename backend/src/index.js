@@ -232,17 +232,36 @@ wss.on('connection', async (ws, req) => {
         }
       }
       
-      // 检查速率限制
-      if (!SecurityMiddleware.checkRateLimit(ws.userId, 60000, 30)) { // 每分钟30条消息
-        ws.send(JSON.stringify({ 
-          error: '发送太频繁，请稍后再试',
-          details: '每分钟最多30条消息'
-        }));
+      // 处理流式语音识别消息（不受速率限制）
+      if (data.type === 'speech_start') {
+        console.log('🎤 开始流式语音识别:', data.sessionId);
+        await chatController.handleStreamingSpeechStart(ws, data);
+        return;
+      }
+      
+      if (data.type === 'speech_frame') {
+        // 处理音频帧数据
+        await chatController.handleStreamingSpeechFrame(ws, data);
+        return;
+      }
+      
+      if (data.type === 'speech_end') {
+        console.log('🛑 结束流式语音识别:', data.sessionId);
+        await chatController.handleStreamingSpeechEnd(ws, data);
         return;
       }
 
       // 只有当有 prompt 时才发送消息
       if (data.prompt) {
+        // 检查速率限制（仅对聊天消息进行限制）
+        if (!SecurityMiddleware.checkRateLimit(ws.userId, 60000, 30)) { // 每分钟30条消息
+          ws.send(JSON.stringify({ 
+            error: '发送太频繁，请稍后再试',
+            details: '每分钟最多30条消息'
+          }));
+          return;
+        }
+        
         // 清理输入内容
         const sanitizedPrompt = SecurityMiddleware.sanitizeMedicalContent(data.prompt);
         // 调用 Azure OpenAI，返回流式数据

@@ -17,10 +17,13 @@ Page({
     isRecordingCanceling: false, // 是否正在取消录音
     waveformData: [],            // 波形数据
     recordingStartY: 0,          // 触摸开始Y坐标
-    showVoiceModal: false,       // 显示录音悬浮层
+    showVoiceModal: false,       // 显示录音界面
     recordingText: '按住说话',   // 录音按钮文字
     isInputRecording: false,     // 输入框是否正在录音
-    keyboardHeight: 0            // 键盘高度
+    keyboardHeight: 0,           // 键盘高度
+    
+    // 流式语音识别状态
+    isStreamingSpeech: false     // 是否正在进行流式识别
   },
 
   onLoad: function() {
@@ -46,22 +49,53 @@ Page({
 
     // 【优化③】一次性初始化录音管理器并注册监听
     this.recorderManager = wx.getRecorderManager();
+    
+    // 流式语音传输相关状态
+    this.streamingSpeech = {
+      isActive: false,           // 是否正在进行流式识别
+      sessionId: null,           // 当前识别会话ID
+      buffer: new ArrayBuffer(0), // 音频数据缓冲区
+      partialResult: '',         // 实时识别结果
+      finalResult: ''            // 最终识别结果
+    };
+    
     this.recorderManager.onStart(() => {
+      console.log('📱 录音开始');
       this.setData({ isRecording: true });
-      wx.showToast({ title: '正在录音...', icon: 'none', duration: 60000 });
+      
+      // 开始流式语音识别会话
+      this.startStreamingSpeechSession();
     });
+    
+    // 【关键】监听实时音频数据帧
+    this.recorderManager.onFrameRecorded((res) => {
+      // 收到音频数据帧，立即发送到后端进行流式识别
+      if (this.streamingSpeech.isActive && res.frameBuffer) {
+        this.sendAudioFrame(res.frameBuffer);
+      }
+    });
+    
     this.recorderManager.onStop((res) => {
-      wx.hideToast();
+      console.log('📱 录音结束');
       this.setData({ isRecording: false });
       
-      // 如果是取消录音，不处理
-      if (this.isCancelingRecording) {
+      // 如果是取消录音，不处理 (检查UI状态)
+      if (this.data.isRecordingCanceling || this.isCancelingRecording) {
         this.isCancelingRecording = false;
+        // 重置UI状态
+        this.setData({
+          isRecordingCanceling: false
+        });
+        // 标记为已取消，阻止后续识别结果处理
+        if (this.streamingSpeech.sessionId) {
+          this.streamingSpeech.isCanceled = true;
+        }
+        this.endStreamingSpeechSession();
         return;
       }
       
-      // 上传语音进行识别
-      this.uploadVoice(res.tempFilePath);
+      // 结束流式识别会话
+      this.endStreamingSpeechSession();
     });
     
     // 【新增】监听键盘高度变化
@@ -463,6 +497,12 @@ Page({
         return;
       }
       
+      // 处理流式语音识别消息
+      if (data.type === 'speech_result') {
+        this.handleStreamingSpeechResult(data);
+        return;
+      }
+      
       // 处理错误消息
       if (data.error) {
         const errorMsg = data.error || 'Server Error';
@@ -492,6 +532,12 @@ Page({
       
       // 【优化①】流式数据处理
       if (data.data) {
+        // 清除响应超时计时器（收到第一个响应）
+        if (this.responseTimeoutId) {
+          clearTimeout(this.responseTimeoutId);
+          this.responseTimeoutId = null;
+        }
+        
         // 如果是第一个分片，先移除加载消息并创建真实的AI消息
         if (this._stream.targetIndex == null) {
           // 移除所有加载消息（可能有多个残留的）
@@ -587,6 +633,12 @@ Page({
         wx.setStorageSync('messages', this.trimMessages(this.data.messages));
         
         console.log('消息接收完成，isConnecting已重置为false');
+        
+        // 清除响应超时计时器
+        if (this.responseTimeoutId) {
+          clearTimeout(this.responseTimeoutId);
+          this.responseTimeoutId = null;
+        }
         
         // Play TTS for complete AI response if in voice mode
         const messages = this.data.messages; // 先获取当前消息列表
@@ -756,14 +808,15 @@ Page({
       },
     });
 
-    // 添加超时机制，30秒后自动重置状态
-    setTimeout(() => {
+    // 存储超时计时器ID
+    this.responseTimeoutId = setTimeout(() => {
       if (this.data.isConnecting) {
         console.log('响应超时，重置isConnecting状态');
         this.setData({ isConnecting: false });
-        wx.showToast({ title: "响应超时，请重试", icon: "none" });
+        // 不显示错误提示，因为AI可能还在正常响应
+        console.warn('检测到长时间响应，已重置连接状态但保持消息接收');
       }
-    }, 30000);
+    }, 60000); // 增加到60秒，减少误报
   },
 
   /**
@@ -802,6 +855,7 @@ Page({
     if (this.waveformTimer) clearInterval(this.waveformTimer);
     if (this.inputLongPressTimer) clearTimeout(this.inputLongPressTimer);
     if (this.voiceLongPressTimer) clearTimeout(this.voiceLongPressTimer);
+    if (this.responseTimeoutId) clearTimeout(this.responseTimeoutId);
 
     // 【新增】注销键盘监听
     wx.offKeyboardHeightChange(this.handleKeyboardHeightChange);
@@ -1213,12 +1267,12 @@ Page({
       isRecordingCanceling: false
     });
     
-    // 设置长按定时器（200ms后开始录音）
+    // 设置长按定时器（50ms后开始录音）
     this.voiceLongPressTimer = setTimeout(() => {
       this.checkRecordingPermission(() => {
         this.startVoiceRecording();
       });
-    }, 200);
+    }, 50);
   },
 
   // 语音按钮触摸移动
@@ -1255,13 +1309,14 @@ Page({
     
     if (this.data.isRecordingCanceling) {
       this.cancelVoiceRecording();
+      // 不在这里重置状态，让onStop事件处理
     } else {
       this.stopVoiceRecording();
+      // 正常结束时重置状态
+      this.setData({
+        isRecordingCanceling: false
+      });
     }
-    
-    this.setData({
-      isRecordingCanceling: false
-    });
   },
 
   // 语音按钮触摸取消
@@ -1365,10 +1420,8 @@ Page({
       waveformData: new Array(20).fill(10) // 初始化波形
     });
     
-    // 开始计时
+    // 开始计时和波形动画
     this.startRecordingTimer();
-    
-    // 开始波形动画
     this.startWaveformAnimation();
   },
 
@@ -1394,7 +1447,12 @@ Page({
     this.stopRecordingTimer();
     this.stopWaveformAnimation();
     
-    this.isCancelingRecording = true; // 标记正在取消
+    this.isCancelingRecording = true; // 标记正在取消（用于onStop检查）
+    
+    // 标记为已取消，阻止后续识别结果处理
+    if (this.streamingSpeech.sessionId) {
+      this.streamingSpeech.isCanceled = true;
+    }
     
     this.setData({
       isRecording: false,
@@ -1540,10 +1598,10 @@ Page({
     this.inputTouchStartTime = Date.now();
     this.inputTouchStartY = e.touches[0].clientY;
     
-    // 设置长按定时器（200ms后开始录音）
+    // 设置长按定时器（50ms后开始录音）
     this.inputLongPressTimer = setTimeout(() => {
       this.startInputRecording();
-    }, 200);
+    }, 50);
   },
 
   // 输入框触摸移动
@@ -1641,7 +1699,12 @@ Page({
     this.stopRecordingTimer();
     this.stopWaveformAnimation();
     
-    this.isCancelingRecording = true;
+    this.isCancelingRecording = true; // 标记正在取消（用于onStop检查）
+    
+    // 标记为已取消，阻止后续识别结果处理
+    if (this.streamingSpeech.sessionId) {
+      this.streamingSpeech.isCanceled = true;
+    }
     
     this.setData({
       isInputRecording: false,
@@ -1654,5 +1717,177 @@ Page({
       icon: 'none',
       duration: 1500
     });
+  },
+
+  // ==================== 流式语音识别方法 ====================
+  
+  /**
+   * 开始流式语音识别会话
+   */
+  startStreamingSpeechSession: function() {
+    if (!this.socketTask) {
+      console.error('WebSocket未连接，无法开始流式识别');
+      return;
+    }
+    
+    // 生成会话ID
+    const sessionId = 'speech_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    
+    this.streamingSpeech = {
+      isActive: true,
+      sessionId: sessionId,
+      buffer: new ArrayBuffer(0),
+      partialResult: '',
+      finalResult: '',
+      isCanceled: false // 重置取消标记
+    };
+    
+    // 发送开始识别信号
+    this.socketTask.send({
+      data: JSON.stringify({
+        type: 'speech_start',
+        sessionId: sessionId,
+        config: {
+          language: 'zh-CN',
+          sampleRate: 16000,
+          channels: 1,
+          format: 'pcm'
+        }
+      })
+    });
+    
+    // 在UI中显示正在录音的状态
+    this.setData({
+      isStreamingSpeech: true
+    });
+    
+    console.log('🎤 开始流式语音识别会话:', sessionId);
+  },
+  
+  /**
+   * 发送音频数据帧到后端
+   */
+  sendAudioFrame: function(frameBuffer) {
+    if (!this.streamingSpeech.isActive || !this.socketTask) {
+      return;
+    }
+    
+    try {
+      // 将 ArrayBuffer 转换为 Base64 以便通过 WebSocket 传输
+      const uint8Array = new Uint8Array(frameBuffer);
+      const base64Data = wx.arrayBufferToBase64(frameBuffer);
+      
+      // 发送音频帧数据
+      this.socketTask.send({
+        data: JSON.stringify({
+          type: 'speech_frame',
+          sessionId: this.streamingSpeech.sessionId,
+          audio: base64Data,
+          size: frameBuffer.byteLength
+        })
+      });
+      
+      console.log(`🔊 发送音频帧: ${frameBuffer.byteLength} 字节`);
+    } catch (error) {
+      console.error('发送音频帧失败:', error);
+    }
+  },
+  
+  /**
+   * 结束流式语音识别会话
+   */
+  endStreamingSpeechSession: function() {
+    if (!this.streamingSpeech.isActive) {
+      return;
+    }
+    
+    // 发送结束识别信号
+    if (this.socketTask) {
+      this.socketTask.send({
+        data: JSON.stringify({
+          type: 'speech_end',
+          sessionId: this.streamingSpeech.sessionId
+        })
+      });
+    }
+    
+    console.log('🛑 结束流式语音识别会话:', this.streamingSpeech.sessionId);
+    
+    // 重置状态
+    this.streamingSpeech = {
+      isActive: false,
+      sessionId: null,
+      buffer: new ArrayBuffer(0),
+      partialResult: '',
+      finalResult: '',
+      isCanceled: false // 标记是否已取消
+    };
+    
+    // 更新UI状态
+    this.setData({
+      isStreamingSpeech: false
+    });
+  },
+  
+  /**
+   * 处理流式语音识别结果
+   */
+  handleStreamingSpeechResult: function(data) {
+    // 检查是否已取消，如果已取消则忽略所有结果
+    if (this.streamingSpeech.isCanceled) {
+      console.log('🚫 忽略已取消会话的识别结果:', data.sessionId, data.resultType);
+      return;
+    }
+    
+    // 检查sessionId匹配性，但允许处理已结束会话的最终结果
+    if (this.streamingSpeech.sessionId && data.sessionId !== this.streamingSpeech.sessionId) {
+      console.warn('收到不匹配的语音识别结果:', data.sessionId, '当前:', this.streamingSpeech.sessionId);
+      return;
+    }
+    
+    // 如果是最终结果且当前sessionId为null，说明是延迟到达的最终结果，需要处理
+    if (data.resultType === 'final' && !this.streamingSpeech.sessionId) {
+      console.log('✅ 收到延迟的最终识别结果:', data.text);
+    }
+    
+    if (data.resultType === 'partial') {
+      // 实时识别结果（不确定），只存储不显示
+      this.streamingSpeech.partialResult = data.text;
+      console.log('🔄 实时识别:', data.text);
+      
+    } else if (data.resultType === 'final') {
+      // 最终识别结果（确定），不显示文字
+      this.streamingSpeech.finalResult = data.text;
+      console.log('✅ 最终识别:', data.text);
+      
+      // 如果得到最终结果，自动发送消息
+      if (data.text && data.text.trim()) {
+        setTimeout(() => {
+          this.setData({ 
+            userInput: data.text.trim(),
+            isStreamingSpeech: false
+          });
+          // 自动发送识别出的文字
+          this.sendMessage();
+        }, 300);
+      } else {
+        // 没有识别到内容，直接关闭
+        setTimeout(() => {
+          this.setData({
+            isStreamingSpeech: false
+          });
+        }, 1000);
+      }
+      
+    } else if (data.resultType === 'error') {
+      // 识别错误，不显示错误文字
+      console.error('❌ 语音识别错误:', data.error);
+      
+      setTimeout(() => {
+        this.setData({
+          isStreamingSpeech: false
+        });
+      }, 2000);
+    }
   }
 });

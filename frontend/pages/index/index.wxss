@@ -158,19 +158,20 @@
 
 
 .send-btn {
-  width: 56rpx;
-  height: 56rpx;
-  padding: 14rpx;
-  background-color: #007AFF;
-  border-radius: 28rpx;
+  width: 84rpx;
+  height: 84rpx;
+  padding: 0;
+  background-color: transparent;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.3s ease;
+  transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
 .send-btn:active {
-  background-color: #0051D5;
+  transform: scale(0.9);
+  opacity: 0.8;
 }
 
 .date-label {
@@ -565,4 +566,207 @@
   width: 36rpx;
   height: 36rpx;
   filter: brightness(0) invert(1);
+}
+
+/* ==================== 流式语音识别样式 ==================== */
+
+/* 流式语音识别遮罩层 */
+.streaming-speech-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* 流式语音识别容器 */
+.streaming-speech-container {
+  background: white;
+  border-radius: 24rpx;
+  padding: 60rpx 40rpx;
+  margin: 0 40rpx;
+  min-width: 600rpx;
+  max-width: 80%;
+  box-shadow: 0 16rpx 48rpx rgba(0, 0, 0, 0.15);
+}
+
+/* 流式语音识别内容 */
+.streaming-speech-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32rpx;
+}
+
+/* 麦克风图标区域 */
+.streaming-speech-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 麦克风图标 */
+.mic-icon {
+  width: 64rpx;
+  height: 64rpx;
+  z-index: 2;
+}
+
+/* 音频波形动画 */
+.audio-wave {
+  position: absolute;
+  display: flex;
+  gap: 6rpx;
+  align-items: center;
+  margin-left: 100rpx;
+}
+
+/* 波形条 */
+.wave-bar {
+  width: 6rpx;
+  height: 20rpx;
+  background: #007AFF;
+  border-radius: 3rpx;
+  animation: wave 1.2s infinite ease-in-out;
+}
+
+/* 波形动画 */
+@keyframes wave {
+  0%, 40%, 100% {
+    transform: scaleY(0.4);
+  }
+  20% {
+    transform: scaleY(1);
+  }
+}
+
+/* 识别文本 */
+.streaming-speech-text {
+  font-size: 32rpx;
+  color: #333;
+  text-align: center;
+  line-height: 1.5;
+  min-height: 48rpx;
+  max-width: 500rpx;
+  word-wrap: break-word;
+}
+
+/* 实时识别文本的动态效果 */
+.streaming-speech-text::after {
+  content: '';
+  display: inline-block;
+  width: 2rpx;
+  height: 32rpx;
+  background: #007AFF;
+  margin-left: 4rpx;
+  animation: blink 1s infinite;
+}
+
+/* 光标闪烁动画 */
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+/* 底部录音界面 */
+.voice-recording-overlay {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+.voice-recording-container {
+  background: linear-gradient(180deg, rgba(0, 122, 255, 0.8) 0%, rgba(0, 122, 255, 0.95) 100%);
+  border-radius: 40rpx 40rpx 0 0;
+  padding: 60rpx 40rpx 120rpx;
+  margin: 0 40rpx;
+  position: relative;
+  transform: translateY(0);
+  transition: all 0.3s ease-in-out;
+  backdrop-filter: blur(10rpx);
+  box-shadow: 0 -20rpx 60rpx rgba(0, 122, 255, 0.3);
+}
+
+.voice-recording-container.canceling {
+  background: linear-gradient(180deg, rgba(255, 59, 48, 0.8) 0%, rgba(255, 59, 48, 0.95) 100%);
+  box-shadow: 0 -20rpx 60rpx rgba(255, 59, 48, 0.3);
+  transform: translateY(-20rpx);
+}
+
+/* 波形容器 */
+.waveform-container {
+  margin-bottom: 40rpx;
+}
+
+.waveform-bars {
+  display: flex;
+  justify-content: center;
+  align-items: end;
+  height: 120rpx;
+  gap: 6rpx;
+}
+
+.waveform-bar {
+  width: 8rpx;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 4rpx;
+  min-height: 10rpx;
+  transition: height 0.1s ease-out;
+  animation: wave-pulse 0.6s ease-in-out infinite alternate;
+}
+
+.waveform-bar:nth-child(2n) {
+  animation-delay: 0.1s;
+}
+
+.waveform-bar:nth-child(3n) {
+  animation-delay: 0.2s;
+}
+
+@keyframes wave-pulse {
+  0% {
+    background: rgba(255, 255, 255, 0.6);
+  }
+  100% {
+    background: rgba(255, 255, 255, 1);
+  }
+}
+
+/* 录音提示信息 */
+.recording-tips {
+  text-align: center;
+  color: white;
+}
+
+.recording-duration {
+  display: block;
+  font-size: 48rpx;
+  font-weight: 600;
+  margin-bottom: 16rpx;
+  text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.3);
+}
+
+.recording-hint,
+.canceling-hint {
+  display: block;
+  font-size: 28rpx;
+  opacity: 0.9;
+  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.2);
+}
+
+.canceling-hint {
+  color: #FFE5E5;
 }

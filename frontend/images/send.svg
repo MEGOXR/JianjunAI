@@ -1,0 +1,10 @@
+<svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 圆形背景 -->
+  <circle cx="14" cy="14" r="14" fill="#007AFF"/>
+  <!-- 圆形边框 -->
+  <circle cx="14" cy="14" r="13.5" fill="none" stroke="#007AFF" stroke-width="1"/>
+  
+  <!-- 发送箭头 -->
+  <path d="M9 14h10" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M15 10l4 4-4 4" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

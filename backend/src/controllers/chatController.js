@@ -472,3 +472,92 @@ exports.handleConnection = async (ws) => {
     return ws.userId || null;
   }
 };
+
+// ==================== 流式语音识别处理 ====================
+
+/**
+ * 处理流式语音识别开始
+ */
+exports.handleStreamingSpeechStart = async (ws, data) => {
+  try {
+    const { sessionId, config } = data;
+    
+    // 验证会话参数
+    if (!sessionId || !config) {
+      ws.send(JSON.stringify({
+        type: 'speech_result',
+        sessionId: sessionId,
+        resultType: 'error',
+        error: '缺少必要参数'
+      }));
+      return;
+    }
+    
+    console.log(`🎤 [${sessionId}] 开始流式语音识别，配置:`, config);
+    
+    // 初始化语音识别会话
+    const speechService = require('../services/speechService');
+    await speechService.startStreamingRecognition(ws, sessionId, config);
+    
+  } catch (error) {
+    console.error('处理语音识别开始错误:', error);
+    ws.send(JSON.stringify({
+      type: 'speech_result',
+      sessionId: data.sessionId,
+      resultType: 'error',
+      error: '启动语音识别失败'
+    }));
+  }
+};
+
+/**
+ * 处理流式语音帧数据
+ */
+exports.handleStreamingSpeechFrame = async (ws, data) => {
+  try {
+    const { sessionId, audio, size } = data;
+    
+    if (!sessionId || !audio) {
+      return;
+    }
+    
+    // 将Base64音频数据转换为Buffer
+    const audioBuffer = Buffer.from(audio, 'base64');
+    
+    // 发送音频帧到语音识别服务
+    const speechService = require('../services/speechService');
+    await speechService.processAudioFrame(sessionId, audioBuffer);
+    
+  } catch (error) {
+    console.error('处理语音帧错误:', error);
+    // 不发送错误，避免影响识别流程
+  }
+};
+
+/**
+ * 处理流式语音识别结束
+ */
+exports.handleStreamingSpeechEnd = async (ws, data) => {
+  try {
+    const { sessionId } = data;
+    
+    if (!sessionId) {
+      return;
+    }
+    
+    console.log(`🛑 [${sessionId}] 结束流式语音识别`);
+    
+    // 结束语音识别会话
+    const speechService = require('../services/speechService');
+    await speechService.endStreamingRecognition(sessionId);
+    
+  } catch (error) {
+    console.error('处理语音识别结束错误:', error);
+    ws.send(JSON.stringify({
+      type: 'speech_result',
+      sessionId: data.sessionId,
+      resultType: 'error',
+      error: '结束语音识别失败'
+    }));
+  }
+};

@@ -58,6 +58,8 @@
     
   </scroll-view>
 
+  <!-- 流式语音识别界面已移除 -->
+
   <!-- 输入区域 -->
   <!-- 文字输入模式 -->
   <view class="input-area" wx:if="{{!isVoiceMode}}">
@@ -93,7 +95,7 @@
       <image 
         wx:if="{{userInput}}"
         class="send-btn"
-        src="/images/send.png"
+        src="/images/send.svg"
         bindtap="sendMessage"
       />
     </view>
@@ -126,9 +128,9 @@
     <image src="/images/arrow-down.png" class="arrow-down-icon"></image>
   </view>
 
-  <!-- 语音录音悬浮层 -->
-  <view class="voice-modal {{isRecordingCanceling ? 'canceling' : ''}}" wx:if="{{showVoiceModal}}">
-    <view class="voice-modal-content">
+  <!-- 底部录音界面 -->
+  <view class="voice-recording-overlay" wx:if="{{showVoiceModal}}">
+    <view class="voice-recording-container {{isRecordingCanceling ? 'canceling' : ''}}">
       <!-- 波形可视化 -->
       <view class="waveform-container">
         <view class="waveform-bars">
@@ -139,16 +141,11 @@
         </view>
       </view>
       
-      <!-- 录音信息 -->
-      <view class="recording-info" wx:if="{{!isRecordingCanceling}}">
+      <!-- 录音提示信息 -->
+      <view class="recording-tips">
         <text class="recording-duration">{{recordingDuration}}s</text>
-        <text class="recording-hint">松手发送，上移取消</text>
-      </view>
-      
-      <!-- 取消提示 -->
-      <view class="cancel-hint" wx:if="{{!isRecordingCanceling}}">
-        <image class="cancel-icon" src="/images/arrow-up.png"></image>
-        <text>上滑取消</text>
+        <text class="recording-hint" wx:if="{{!isRecordingCanceling}}">松手发送，上移取消</text>
+        <text class="canceling-hint" wx:if="{{isRecordingCanceling}}">松手取消发送</text>
       </view>
     </view>
   </view>
