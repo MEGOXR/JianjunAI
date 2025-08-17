@@ -12,9 +12,6 @@
       "desc": "用于语音输入功能，为您提供更便捷的咨询体验"
     }
   },
-  "requiredPrivateInfos": [
-    "getRecorderManager"
-  ],
   "style": "v2",
   "componentFramework": "glass-easel",
   "sitemapLocation": "sitemap.json",
