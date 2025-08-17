@@ -678,95 +678,122 @@
   }
 }
 
-/* 底部录音界面 */
+/* 底部录音界面 - 豆包风格半圆设计 */
 .voice-recording-overlay {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
+  height: 24vh; /* 控制在1/4以下 */
   z-index: 1000;
   pointer-events: none;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
 }
 
 .voice-recording-container {
-  background: linear-gradient(180deg, rgba(0, 122, 255, 0.8) 0%, rgba(0, 122, 255, 0.95) 100%);
-  border-radius: 40rpx 40rpx 0 0;
-  padding: 60rpx 40rpx 120rpx;
-  margin: 0 40rpx;
+  width: 100vw;
+  height: 100%;
+  background: radial-gradient(ellipse at center bottom, rgba(0, 122, 255, 0.9) 0%, rgba(0, 122, 255, 0.6) 30%, rgba(0, 122, 255, 0.3) 60%, rgba(0, 122, 255, 0.1) 80%, rgba(0, 122, 255, 0.02) 100%);
+  border-radius: 50% 50% 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   position: relative;
-  transform: translateY(0);
-  transition: all 0.3s ease-in-out;
-  backdrop-filter: blur(10rpx);
-  box-shadow: 0 -20rpx 60rpx rgba(0, 122, 255, 0.3);
+  transition: all 0.3s ease;
+  backdrop-filter: blur(15rpx);
+  padding: 60rpx 40rpx 80rpx;
 }
 
 .voice-recording-container.canceling {
-  background: linear-gradient(180deg, rgba(255, 59, 48, 0.8) 0%, rgba(255, 59, 48, 0.95) 100%);
-  box-shadow: 0 -20rpx 60rpx rgba(255, 59, 48, 0.3);
-  transform: translateY(-20rpx);
+  background: radial-gradient(ellipse at center bottom, rgba(255, 59, 48, 0.9) 0%, rgba(255, 59, 48, 0.6) 30%, rgba(255, 59, 48, 0.3) 60%, rgba(255, 59, 48, 0.1) 80%, rgba(255, 59, 48, 0.02) 100%);
 }
 
-/* 波形容器 */
-.waveform-container {
-  margin-bottom: 40rpx;
-}
-
-.waveform-bars {
-  display: flex;
-  justify-content: center;
-  align-items: end;
-  height: 120rpx;
-  gap: 6rpx;
-}
-
-.waveform-bar {
-  width: 8rpx;
-  background: rgba(255, 255, 255, 0.8);
-  border-radius: 4rpx;
-  min-height: 10rpx;
-  transition: height 0.1s ease-out;
-  animation: wave-pulse 0.6s ease-in-out infinite alternate;
-}
-
-.waveform-bar:nth-child(2n) {
-  animation-delay: 0.1s;
-}
-
-.waveform-bar:nth-child(3n) {
-  animation-delay: 0.2s;
-}
-
-@keyframes wave-pulse {
-  0% {
-    background: rgba(255, 255, 255, 0.6);
-  }
-  100% {
-    background: rgba(255, 255, 255, 1);
-  }
-}
-
-/* 录音提示信息 */
+/* 录音提示文字 - 在波形上方 */
 .recording-tips {
+  position: relative;
   text-align: center;
   color: white;
+  margin-bottom: 30rpx;
+  z-index: 2;
 }
 
 .recording-duration {
-  display: block;
-  font-size: 48rpx;
-  font-weight: 600;
-  margin-bottom: 16rpx;
-  text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.3);
+  display: none; /* 不显示秒数 */
 }
 
 .recording-hint,
 .canceling-hint {
   display: block;
-  font-size: 28rpx;
-  opacity: 0.9;
-  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.2);
+  font-size: 30rpx;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui;
 }
 
 .canceling-hint {
-  color: #FFE5E5;
+  color: rgba(255, 230, 230, 0.95);
+}
+
+/* 波形容器 - 在提示文字下方 */
+.waveform-container {
+  position: relative;
+  width: 70%; /* 占屏幕宽度的70% */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.waveform-bars {
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* 平均分布，更修长 */
+  width: 100%;
+  height: 60rpx;
+}
+
+.waveform-bar {
+  width: 5rpx;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 2.5rpx;
+  min-height: 16rpx;
+  transition: height 0.1s ease-out;
+  animation: waveAnimation 1.2s ease-in-out infinite;
+}
+
+.waveform-bar:nth-child(1) { animation-delay: 0s; }
+.waveform-bar:nth-child(2) { animation-delay: 0.1s; }
+.waveform-bar:nth-child(3) { animation-delay: 0.2s; }
+.waveform-bar:nth-child(4) { animation-delay: 0.3s; }
+.waveform-bar:nth-child(5) { animation-delay: 0.4s; }
+.waveform-bar:nth-child(6) { animation-delay: 0.5s; }
+.waveform-bar:nth-child(7) { animation-delay: 0.4s; }
+.waveform-bar:nth-child(8) { animation-delay: 0.3s; }
+.waveform-bar:nth-child(9) { animation-delay: 0.2s; }
+.waveform-bar:nth-child(10) { animation-delay: 0.1s; }
+
+@keyframes waveAnimation {
+  0%, 100% { 
+    background: rgba(255, 255, 255, 0.6);
+    transform: scaleY(1);
+  }
+  50% { 
+    background: rgba(255, 255, 255, 1);
+    transform: scaleY(1.8);
+  }
+}
+
+/* 录音时隐藏输入框 */
+.input-area,
+.voice-input-area {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.input-area.hidden,
+.voice-input-area.hidden {
+  opacity: 0;
+  transform: translateY(20rpx);
+  pointer-events: none;
 }

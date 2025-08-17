@@ -62,7 +62,7 @@
 
   <!-- 输入区域 -->
   <!-- 文字输入模式 -->
-  <view class="input-area" wx:if="{{!isVoiceMode}}">
+  <view class="input-area {{showVoiceModal ? 'hidden' : ''}}" wx:if="{{!isVoiceMode}}">
     <view class="input-container">
       <view class="input-wrapper"
             bindtouchstart="onInputTouchStart"
@@ -102,7 +102,7 @@
   </view>
 
   <!-- 语音输入模式 -->
-  <view class="voice-input-area" wx:if="{{isVoiceMode}}">
+  <view class="voice-input-area {{showVoiceModal ? 'hidden' : ''}}" wx:if="{{isVoiceMode}}">
     <view class="voice-container">
       <!-- 占位元素保持布局平衡 -->
       <view style="width: 56rpx; height: 56rpx;"></view>
@@ -131,6 +131,13 @@
   <!-- 底部录音界面 -->
   <view class="voice-recording-overlay" wx:if="{{showVoiceModal}}">
     <view class="voice-recording-container {{isRecordingCanceling ? 'canceling' : ''}}">
+      <!-- 录音提示信息 - 在波形上方 -->
+      <view class="recording-tips">
+        <text class="recording-duration">{{recordingDuration}}s</text>
+        <text class="recording-hint" wx:if="{{!isRecordingCanceling}}">松手发送，上移取消</text>
+        <text class="canceling-hint" wx:if="{{isRecordingCanceling}}">松手取消发送</text>
+      </view>
+      
       <!-- 波形可视化 -->
       <view class="waveform-container">
         <view class="waveform-bars">
@@ -139,13 +146,6 @@
                 class="waveform-bar"
                 style="height: {{item}}%"></view>
         </view>
-      </view>
-      
-      <!-- 录音提示信息 -->
-      <view class="recording-tips">
-        <text class="recording-duration">{{recordingDuration}}s</text>
-        <text class="recording-hint" wx:if="{{!isRecordingCanceling}}">松手发送，上移取消</text>
-        <text class="canceling-hint" wx:if="{{isRecordingCanceling}}">松手取消发送</text>
       </view>
     </view>
   </view>

@@ -1417,8 +1417,10 @@ Page({
       isRecording: true,
       showVoiceModal: true,
       recordingDuration: 0,
-      waveformData: new Array(20).fill(10) // 初始化波形
+      waveformData: new Array(10).fill(30) // 初始化波形
     });
+    
+    // 隐藏输入框的功能通过CSS的showVoiceModal状态来实现
     
     // 开始计时和波形动画
     this.startRecordingTimer();
@@ -1437,6 +1439,8 @@ Page({
       isRecording: false,
       showVoiceModal: false
     });
+    
+    // 输入框显示恢复通过showVoiceModal状态自动处理
   },
 
   // 取消录音
@@ -1458,6 +1462,8 @@ Page({
       isRecording: false,
       showVoiceModal: false
     });
+    
+    // 输入框显示恢复通过showVoiceModal状态自动处理
     
     wx.showToast({
       title: '录音已取消',
@@ -1491,13 +1497,13 @@ Page({
     this.waveformTimer = setInterval(() => {
       if (!this.data.isRecording) return;
       
-      // 生成随机波形数据（模拟音频电平）
-      const waveformData = Array(20).fill(0).map(() => {
-        return Math.random() * 80 + 20; // 20-100%高度
+      // 生成简洁的波形数据（10个波形条，医美专业风格）
+      const waveformData = Array(10).fill(0).map(() => {
+        return Math.random() * 60 + 30; // 30-90%高度，更加稳定
       });
       
       this.setData({ waveformData });
-    }, 100); // 每100ms更新一次
+    }, 120); // 稍微慢一点，更专业
   },
 
   stopWaveformAnimation: function() {
@@ -1663,7 +1669,7 @@ Page({
         isInputRecording: true,
         showVoiceModal: true,
         recordingDuration: 0,
-        waveformData: new Array(20).fill(10)
+        waveformData: new Array(10).fill(30)
       });
       
       this.recorderManager.start({
