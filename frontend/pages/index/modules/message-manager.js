@@ -108,7 +108,10 @@ class MessageManager {
         isGenerating: false
       };
       if (data.suggestions && data.suggestions.length > 0) {
+        console.log('🎯 收到建议问题:', data.suggestions);
         updateData[`messages[${lastIndex}].suggestions`] = data.suggestions;
+      } else {
+        console.log('❌ 没有收到建议问题或建议问题为空');
       }
       this.page.setData(updateData);
     }
@@ -369,6 +372,43 @@ class MessageManager {
   trimMessages(list, limit = 100) {
     if (list.length <= limit) return list;
     return list.slice(-limit);
+  }
+
+  /**
+   * 处理建议问题消息
+   */
+  handleSuggestions(suggestions) {
+    if (!suggestions || !Array.isArray(suggestions) || suggestions.length === 0) {
+      console.log('❌ 建议问题为空或无效:', suggestions);
+      return;
+    }
+    
+    console.log('✅ 处理建议问题:', suggestions);
+    
+    // 找到最后一条AI消息
+    const messages = this.page.data.messages;
+    let lastAiMessageIndex = -1;
+    
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && !messages[i].isLoading) {
+        lastAiMessageIndex = i;
+        break;
+      }
+    }
+    
+    if (lastAiMessageIndex >= 0) {
+      console.log(`📍 在消息索引 ${lastAiMessageIndex} 添加建议问题:`, suggestions);
+      this.page.setData({
+        [`messages[${lastAiMessageIndex}].suggestions`]: suggestions
+      });
+      
+      // 更新本地存储
+      const updatedMessages = [...messages];
+      updatedMessages[lastAiMessageIndex].suggestions = suggestions;
+      wx.setStorageSync('messages', updatedMessages);
+    } else {
+      console.log('❌ 没有找到适合添加建议问题的AI消息');
+    }
   }
 
   /**

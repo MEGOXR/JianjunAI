@@ -177,6 +177,13 @@ class WebSocketManager {
       return;
     }
     
+    // 处理建议问题消息
+    if (data.type === 'suggestions') {
+      console.log('🎯 收到建议问题消息:', data.suggestions);
+      this.page.messageManager.handleSuggestions(data.suggestions);
+      return;
+    }
+    
     // 处理错误消息
     if (data.error) {
       this.handleError(data);
@@ -189,6 +196,11 @@ class WebSocketManager {
     }
 
     if (data.done) {
+      console.log('🎯 收到完成信号:', {
+        suggestions: data.suggestions,
+        hasData: !!data,
+        suggestionsLength: data.suggestions ? data.suggestions.length : 0
+      });
       this.page.messageManager.handleStreamingComplete(data);
     }
   }
