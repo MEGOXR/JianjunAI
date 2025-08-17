@@ -71,6 +71,17 @@ app.use(express.json({ limit: '10mb' }));
 // 静态文件服务 - 用于诊断页面
 app.use('/public', express.static('public'));
 
+// 根路径 - Azure AlwaysOn健康检查
+app.get('/', (req, res) => {
+  res.status(200).json({ 
+    service: 'JianjunAI API',
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    port: port,
+    version: '1.0.0'
+  });
+});
+
 // 健康检查
 app.get('/health', (req, res) => {
   res.status(200).json({ 
@@ -248,6 +259,12 @@ wss.on('connection', async (ws, req) => {
       if (data.type === 'speech_end') {
         console.log('🛑 结束流式语音识别:', data.sessionId);
         await chatController.handleStreamingSpeechEnd(ws, data);
+        return;
+      }
+      
+      if (data.type === 'speech_cancel') {
+        console.log('❌ 取消流式语音识别:', data.sessionId);
+        await chatController.handleStreamingSpeechCancel(ws, data);
         return;
       }
 
