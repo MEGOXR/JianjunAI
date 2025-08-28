@@ -448,6 +448,46 @@ class SpeechService {
       this.cleanupSession(sessionId);
     }
   }
+  
+  /**
+   * 取消流式语音识别（不发送最终结果）
+   * @param {string} sessionId - 会话ID
+   */
+  async cancelStreamingRecognition(sessionId) {
+    const session = this.streamingSessions.get(sessionId);
+    if (!session) {
+      console.warn(`⚠️ [${sessionId}] 会话不存在，无法取消`);
+      return;
+    }
+
+    try {
+      console.log(`❌ [${sessionId}] 用户取消流式语音识别`);
+
+      // 标记为用户取消（这会阻止发送最终结果）
+      session.isUserCanceled = true;
+      session.isUserEnded = true;
+
+      // 关闭音频流
+      session.pushStream.close();
+      
+      // 停止连续识别
+      session.recognizer.stopContinuousRecognitionAsync(
+        () => {
+          console.log(`✅ [${sessionId}] 取消识别请求已发送`);
+          // 立即清理会话
+          this.cleanupSession(sessionId);
+        },
+        (error) => {
+          console.error(`❌ [${sessionId}] 取消识别失败:`, error);
+          this.cleanupSession(sessionId);
+        }
+      );
+
+    } catch (error) {
+      console.error(`❌ [${sessionId}] 取消识别失败:`, error);
+      this.cleanupSession(sessionId);
+    }
+  }
 
   /**
    * 发送识别结果到前端
@@ -489,6 +529,13 @@ class SpeechService {
       return;
     }
 
+    // 检查是否被用户取消
+    if (session.isUserCanceled) {
+      console.log(`❌ [${sessionId}] 用户取消会话，不发送最终结果`);
+      this.cleanupSession(sessionId);
+      return;
+    }
+
     if (!session.hasFinalResult) {
       // 构建最终结果：优先使用已识别的片段，否则使用最后的部分结果
       let finalText = '';
@@ -510,6 +557,28 @@ class SpeechService {
 
     // 清理会话
     this.cleanupSession(sessionId);
+  }
+
+  /**
+   * 全局清理所有识别会话
+   * @public
+   */
+  cleanup() {
+    console.log(`🧹 开始清理所有语音识别会话，当前会话数: ${this.streamingSessions.size}`);
+    
+    // 清理所有活跃的会话
+    for (const [sessionId, session] of this.streamingSessions.entries()) {
+      try {
+        console.log(`🧹 清理会话: ${sessionId}`);
+        this.cleanupSession(sessionId);
+      } catch (error) {
+        console.error(`❌ 清理会话 ${sessionId} 失败:`, error);
+      }
+    }
+    
+    // 清空会话映射
+    this.streamingSessions.clear();
+    console.log(`✅ 语音识别会话清理完成`);
   }
 
   /**

@@ -86,15 +86,16 @@ class StreamingSpeechManager {
       return;
     }
     
-    // 发送结束识别信号
-    if (this.page.webSocketManager.socketTask) {
+    // 发送结束识别信号（如果不是取消的情况）
+    if (this.page.webSocketManager.socketTask && !this.streamingSpeech.isCanceled) {
       this.page.webSocketManager.send({
         type: 'speech_end',
         sessionId: this.streamingSpeech.sessionId
       });
     }
     
-    console.log('🛑 结束流式语音识别会话:', this.streamingSpeech.sessionId);
+    console.log('🛑 结束流式语音识别会话:', this.streamingSpeech.sessionId, 
+                '是否取消:', this.streamingSpeech.isCanceled);
     
     // 重置状态
     this.streamingSpeech = {
@@ -107,7 +108,12 @@ class StreamingSpeechManager {
     };
     
     this.page.setData({
-      isStreamingSpeech: false
+      isStreamingSpeech: false,
+      // 关闭录音界面
+      showVoiceModal: false,
+      isInputRecording: false,
+      isRecording: false,
+      isRecordingCanceling: false
     });
   }
   
@@ -147,17 +153,42 @@ class StreamingSpeechManager {
         setTimeout(() => {
           this.page.setData({ 
             userInput: data.text.trim(),
-            isStreamingSpeech: false
+            isStreamingSpeech: false,
+            // 关闭录音界面
+            showVoiceModal: false,
+            isInputRecording: false,
+            isRecording: false,
+            isRecordingCanceling: false
           });
           this.page.messageManager.sendMessage();
         }, 300);
       } else {
         setTimeout(() => {
           this.page.setData({
-            isStreamingSpeech: false
+            isStreamingSpeech: false,
+            // 关闭录音界面
+            showVoiceModal: false,
+            isInputRecording: false,
+            isRecording: false,
+            isRecordingCanceling: false
           });
         }, 1000);
       }
+      
+    } else if (data.resultType === 'canceled') {
+      // 识别被取消
+      console.log('❌ 语音识别已取消');
+      
+      setTimeout(() => {
+        this.page.setData({
+          isStreamingSpeech: false,
+          // 关闭录音界面
+          showVoiceModal: false,
+          isInputRecording: false,
+          isRecording: false,
+          isRecordingCanceling: false
+        });
+      }, 500);
       
     } else if (data.resultType === 'error') {
       // 识别错误
@@ -165,12 +196,58 @@ class StreamingSpeechManager {
       
       setTimeout(() => {
         this.page.setData({
-          isStreamingSpeech: false
+          isStreamingSpeech: false,
+          // 关闭录音界面
+          showVoiceModal: false,
+          isInputRecording: false,
+          isRecording: false,
+          isRecordingCanceling: false
         });
       }, 2000);
     }
   }
 
+  /**
+   * 取消流式语音识别会话
+   */
+  cancelSession() {
+    if (!this.streamingSpeech.isActive) {
+      return;
+    }
+    
+    // 标记为已取消
+    this.streamingSpeech.isCanceled = true;
+    
+    // 发送取消信号到后端
+    if (this.page.webSocketManager.socketTask) {
+      this.page.webSocketManager.send({
+        type: 'speech_cancel',
+        sessionId: this.streamingSpeech.sessionId
+      });
+    }
+    
+    console.log('❌ 取消流式语音识别会话:', this.streamingSpeech.sessionId);
+    
+    // 重置状态
+    this.streamingSpeech = {
+      isActive: false,
+      sessionId: null,
+      buffer: new ArrayBuffer(0),
+      partialResult: '',
+      finalResult: '',
+      isCanceled: false
+    };
+    
+    this.page.setData({
+      isStreamingSpeech: false,
+      // 关闭录音界面
+      showVoiceModal: false,
+      isInputRecording: false,
+      isRecording: false,
+      isRecordingCanceling: false
+    });
+  }
+  
   /**
    * 标记会话为已取消
    */

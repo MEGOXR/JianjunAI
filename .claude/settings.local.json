@@ -30,7 +30,12 @@
       "WebFetch(domain:www.flaticon.com)",
       "WebFetch(domain:uxwing.com)",
       "WebFetch(domain:www.svgrepo.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(claude mcp add:*)",
+      "Bash(npx:*)",
+      "Bash(claude mcp:*)",
+      "Bash(find:*)",
+      "Bash(del nul)"
     ],
     "deny": []
   }

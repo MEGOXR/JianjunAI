@@ -81,10 +81,24 @@ class WebSocketManager {
 
     socketTask.onClose((res) => {
       console.log("WebSocket 连接关闭 - 关闭码:", res.code, "关闭原因:", res.reason);
+      
+      // 清理所有语音相关状态，防止界面卡住
       this.page.setData({ 
         socketTask: null,
-        isConnecting: false
+        isConnecting: false,
+        // 强制关闭所有录音相关状态
+        showVoiceModal: false,
+        isInputRecording: false,
+        isRecording: false,
+        isRecordingCanceling: false,
+        isStreamingSpeech: false,
+        isGenerating: false
       });
+      
+      // 取消流式语音识别会话
+      if (this.page.streamingSpeechManager) {
+        this.page.streamingSpeechManager.cancelSession();
+      }
       
       if (res.code === 1000) {
         console.log("正常关闭，不重连");
@@ -100,10 +114,25 @@ class WebSocketManager {
 
     socketTask.onError((error) => {
       console.error("WebSocket 错误详情:", error);
+      
+      // 清理所有语音相关状态，防止界面卡住
       this.page.setData({ 
         socketTask: null,
-        isConnecting: false
+        isConnecting: false,
+        // 强制关闭所有录音相关状态
+        showVoiceModal: false,
+        isInputRecording: false,
+        isRecording: false,
+        isRecordingCanceling: false,
+        isStreamingSpeech: false,
+        isGenerating: false
       });
+      
+      // 取消流式语音识别会话
+      if (this.page.streamingSpeechManager) {
+        this.page.streamingSpeechManager.cancelSession();
+      }
+      
       wx.showToast({ title: "连接错误", icon: "none" });
       
       setTimeout(() => {
@@ -181,6 +210,30 @@ class WebSocketManager {
     if (data.type === 'suggestions') {
       console.log('🎯 收到建议问题消息:', data.suggestions);
       this.page.messageManager.handleSuggestions(data.suggestions);
+      return;
+    }
+    
+    // 处理预热完成消息
+    if (data.type === 'warmup_complete') {
+      console.log('🔥 收到预热完成消息:', {
+        userId: data.userId,
+        hasGreeting: data.hasGreeting,
+        hasSuggestions: data.hasSuggestions,
+        errors: data.errors
+      });
+      
+      if (data.errors && data.errors.length > 0) {
+        console.warn('预热过程中发生错误:', data.errors);
+      }
+      
+      // 可以在这里添加预热完成的UI反馈
+      return;
+    }
+    
+    // 处理连接确认消息
+    if (data.type === 'connected') {
+      console.log('✅ 收到连接确认:', data);
+      this.page.setData({ isConnecting: false });
       return;
     }
     
@@ -311,6 +364,24 @@ class WebSocketManager {
    * 断开连接
    */
   disconnect() {
+    // 强制清理所有录音相关状态
+    this.page.setData({ 
+      socketTask: null,
+      isConnecting: false,
+      // 强制关闭所有录音相关状态
+      showVoiceModal: false,
+      isInputRecording: false,
+      isRecording: false,
+      isRecordingCanceling: false,
+      isStreamingSpeech: false,
+      isGenerating: false
+    });
+    
+    // 取消流式语音识别会话
+    if (this.page.streamingSpeechManager) {
+      this.page.streamingSpeechManager.cancelSession();
+    }
+    
     if (this.socketTask) {
       this.socketTask.close();
       this.socketTask = null;

@@ -45,6 +45,44 @@ class UserDataService {
     }
   }
 
+  // 快速获取用户数据（优先使用缓存，避免文件I/O）
+  async getUserDataFast(userId) {
+    this.validateUserId(userId);
+    
+    // 优先使用内存缓存
+    if (this.cache.has(userId)) {
+      const cachedData = this.cache.get(userId);
+      const cacheAge = Date.now() - cachedData.timestamp;
+      
+      // 如果缓存未过期，直接返回
+      if (cacheAge < this.cacheTimeout) {
+        console.log(`用户 ${userId} 使用缓存数据，缓存年龄: ${cacheAge}ms`);
+        return cachedData.data;
+      }
+    }
+    
+    // 缓存过期或不存在，异步更新缓存但返回旧数据（如果有）
+    const oldData = this.cache.get(userId)?.data || null;
+    
+    // 异步更新缓存，不阻塞当前请求
+    this.updateCacheAsync(userId);
+    
+    return oldData;
+  }
+  
+  // 异步更新缓存，不阻塞主流程
+  async updateCacheAsync(userId) {
+    try {
+      const userData = await this.getUserData(userId);
+      this.cache.set(userId, {
+        data: userData,
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      console.error(`异步更新用户 ${userId} 缓存失败:`, error);
+    }
+  }
+
   async loadUserData() {
     // 检查缓存是否有效
     const now = Date.now();

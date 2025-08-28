@@ -369,8 +369,20 @@ exports.sendMessage = async (ws, prompt) => {
     // 异步生成建议问题，不阻塞done消息
     const generateSuggestionsAsync = async () => {
       try {
-        const suggestions = await suggestionService.generateSuggestions(history, cleanedResponse);
-        console.log('建议问题生成完成:', suggestions);
+        // 先检查预热服务是否已经生成了建议
+        const warmupService = require('../services/warmupService');
+        const warmupResults = await warmupService.getWarmupResults(userId);
+        
+        let suggestions;
+        if (warmupResults && warmupResults.suggestions && warmupResults.suggestions.length > 0) {
+          console.log('使用预热的建议问题:', warmupResults.suggestions);
+          suggestions = warmupResults.suggestions;
+        } else {
+          // 预热没有准备好建议，现场生成
+          console.log('预热建议未就绪，现场生成');
+          suggestions = await suggestionService.generateSuggestions(history, cleanedResponse);
+          console.log('建议问题生成完成:', suggestions);
+        }
         
         // 发送建议问题
         if (ws.readyState === ws.OPEN) {
@@ -398,7 +410,7 @@ exports.sendMessage = async (ws, prompt) => {
     ws.send(JSON.stringify({ done: true }));
     console.log('done标记发送完成');
     
-    // 后台生成建议问题
+    // 后台生成建议问题（优先使用预热数据）
     generateSuggestionsAsync();
   } catch (error) {
     console.error("Azure OpenAI 调用出错:", error);
@@ -427,6 +439,15 @@ exports.sendMessage = async (ws, prompt) => {
 exports.handleDisconnect = (ws) => {
   const userId = ws.userId;
   
+  // 清理正在进行的语音识别会话
+  try {
+    const speechService = require('../services/speechService');
+    speechService.cleanup();
+    console.log('清理语音识别会话完成');
+  } catch (error) {
+    console.error('清理语音识别会话失败:', error);
+  }
+  
   // 清理 WebSocket 相关资源
   if (ws.readyState === ws.OPEN) {
     ws.close();
@@ -454,48 +475,30 @@ exports.handleConnection = async (ws) => {
     const userId = getUserId(ws);
     console.log('获取用户ID:', userId);
     
-    // 异步处理用户数据和问候语，不阻塞连接确认
-    const handleGreetingAsync = async () => {
-      try {
-        let userData = await userDataService.getUserData(userId);
-        console.log('获取用户数据成功');
-        
-        // 生成智能问候语（基于时间判断是否需要）
-        const greeting = await greetingService.generateGreeting(userData);
-        
-        // 更新用户最后访问时间（非阻塞）
-        userDataService.updateUserInfo(userId, { lastVisitTime: Date.now() })
-          .then(() => console.log('更新用户信息成功'))
-          .catch(err => console.error('更新用户信息失败:', err));
-        
-        // 仅在需要时发送问候消息
-        if (greeting && ws.readyState === ws.OPEN) {
-          console.log('生成问候语成功:', greeting.substring(0, 50) + '...');
-          ws.send(JSON.stringify({
-            type: 'greeting',
-            data: greeting,
-            userId: userId
-          }));
-          console.log('问候消息发送成功');
-        } else {
-          console.log('用户24小时内访问过或连接已断开，跳过问候消息');
-        }
-      } catch (error) {
-        console.error('异步问候语处理失败:', error);
-      }
-    };
-    
-    // 立即发送连接确认
+    // 立即发送连接确认，让用户感知连接成功
     if (ws.readyState === ws.OPEN) {
       ws.send(JSON.stringify({
         type: 'connected',
         userId: userId,
         timestamp: new Date().toISOString()
       }));
+      console.log('连接确认已发送');
     }
     
-    // 异步处理问候语
-    handleGreetingAsync();
+    // 立即启动预热服务，开始所有前置工作
+    const warmupService = require('../services/warmupService');
+    warmupService.startUserWarmup(userId, ws)
+      .then(() => {
+        console.log(`🎉 用户 ${userId} 预热流程完成`);
+        // 更新用户最后访问时间（非阻塞）
+        userDataService.updateUserInfo(userId, { lastVisitTime: Date.now() })
+          .then(() => console.log('更新用户访问时间成功'))
+          .catch(err => console.error('更新用户访问时间失败:', err));
+      })
+      .catch(error => {
+        console.error(`用户 ${userId} 预热失败:`, error);
+        // 预热失败不影响正常连接
+      });
     
     return userId;
   } catch (error) {
@@ -603,6 +606,42 @@ exports.handleStreamingSpeechEnd = async (ws, data) => {
       sessionId: data.sessionId,
       resultType: 'error',
       error: '结束语音识别失败'
+    }));
+  }
+};
+
+/**
+ * 处理流式语音识别取消
+ */
+exports.handleStreamingSpeechCancel = async (ws, data) => {
+  try {
+    const { sessionId } = data;
+    
+    if (!sessionId) {
+      return;
+    }
+    
+    console.log(`❌ [${sessionId}] 取消流式语音识别`);
+    
+    // 取消语音识别会话（不发送最终结果）
+    const speechService = require('../services/speechService');
+    await speechService.cancelStreamingRecognition(sessionId);
+    
+    // 发送取消确认
+    ws.send(JSON.stringify({
+      type: 'speech_result',
+      sessionId: sessionId,
+      resultType: 'canceled',
+      text: ''
+    }));
+    
+  } catch (error) {
+    console.error('处理语音识别取消错误:', error);
+    ws.send(JSON.stringify({
+      type: 'speech_result',
+      sessionId: data.sessionId,
+      resultType: 'error',
+      error: '取消语音识别失败'
     }));
   }
 };

@@ -15,6 +15,7 @@ class VoiceRecorder {
     this.voiceTouchStartTime = 0; // 语音按钮触摸开始时间
     this.inputTouchStartTime = 0;
     this.inputTouchStartY = 0;
+    this.isInputRecordingCanceled = false; // 标记输入框录音是否被取消
     
     this.setupRecorderEvents();
   }
@@ -190,17 +191,32 @@ class VoiceRecorder {
    * 输入框触摸开始
    */
   onInputTouchStart(e) {
+    console.log('🔥 输入框触摸开始', {
+      hasUserInput: !!this.page.data.userInput,
+      keyboardHeight: this.page.data.keyboardHeight,
+      currentTime: Date.now()
+    });
+    
     if (this.page.data.userInput || this.page.data.keyboardHeight > 0) {
+      console.log('❌ 跳过触摸开始（有输入内容或键盘弹起）');
       return;
     }
     
     this.inputTouchStartTime = Date.now();
     this.inputTouchStartY = e.touches[0].clientY;
+    this.isInputRecordingCanceled = false; // 重置取消标记
     
-    // 长按100ms触发录音
+    console.log('⏱️ 设置60ms长按定时器');
+    // 长按60ms触发录音
     this.inputLongPressTimer = setTimeout(() => {
-      this.startInputRecording();
-    }, 100);
+      console.log('⏰ 长按定时器触发，检查是否已取消');
+      if (!this.isInputRecordingCanceled) {
+        console.log('✅ 未被取消，开始录音');
+        this.startInputRecording();
+      } else {
+        console.log('❌ 已被取消，跳过录音');
+      }
+    }, 60);
   }
 
   /**
@@ -230,34 +246,56 @@ class VoiceRecorder {
    * 输入框触摸结束
    */
   onInputTouchEnd(e) {
+    const touchDuration = Date.now() - this.inputTouchStartTime;
+    console.log('🛑 输入框触摸结束', {
+      touchDuration: touchDuration + 'ms',
+      hasLongPressTimer: !!this.inputLongPressTimer,
+      isInputRecording: this.page.data.isInputRecording,
+      showVoiceModal: this.page.data.showVoiceModal,
+      currentTime: Date.now()
+    });
+    
+    // 标记录音已被取消，防止异步的权限检查完成后仍然启动录音
+    this.isInputRecordingCanceled = true;
+    console.log('🚫 标记录音已被取消');
+    
     // 清除长按定时器，防止触发录音
     if (this.inputLongPressTimer) {
+      console.log('⏱️ 清除长按定时器');
       clearTimeout(this.inputLongPressTimer);
       this.inputLongPressTimer = null;
+    } else {
+      console.log('⚠️ 长按定时器已经不存在');
     }
-    
-    // 计算触摸持续时间
-    const touchDuration = Date.now() - this.inputTouchStartTime;
     
     // 如果没有开始录音，直接返回（说明是短触摸）
     if (!this.page.data.isInputRecording) {
-      console.log('输入框短触摸，未触发录音:', touchDuration + 'ms');
+      console.log('✅ 输入框短触摸，未触发录音:', touchDuration + 'ms');
+      
+      // 强制确保UI状态正确
+      this.page.setData({
+        showVoiceModal: false,
+        isInputRecording: false,
+        isRecording: false,
+        isRecordingCanceling: false
+      });
+      console.log('🔧 强制重置UI状态');
       return;
     }
     
     // 如果触摸时间少于300ms，认为是误触，取消录音
     if (touchDuration < 300) {
-      console.log('输入框触摸时间过短，取消录音:', touchDuration + 'ms');
+      console.log('⏰ 输入框触摸时间过短，取消录音:', touchDuration + 'ms');
       this.cancelInputRecording();
       return;
     }
     
     // 正在录音，根据取消状态决定操作
     if (this.page.data.isRecordingCanceling) {
-      console.log('输入框用户上滑取消录音');
+      console.log('↑ 输入框用户上滑取消录音');
       this.cancelInputRecording();
     } else {
-      console.log('输入框正常结束录音');
+      console.log('✅ 输入框正常结束录音');
       this.stopInputRecording();
     }
   }
@@ -360,13 +398,31 @@ class VoiceRecorder {
    * 开始输入框录音
    */
   startInputRecording() {
+    console.log('🎤 开始输入框录音');
     this.checkRecordingPermission(() => {
+      // 在异步回调中再次检查是否已被取消
+      if (this.isInputRecordingCanceled) {
+        console.log('❌ 录音已被取消，不设置UI状态');
+        return;
+      }
+      
+      console.log('🔑 录音权限检查通过，设置录音UI状态');
       this.page.setData({
         isInputRecording: true,
         showVoiceModal: true,
         recordingDuration: 0,
         waveformData: new Array(10).fill(30)
       });
+      console.log('📺 录音UI状态已设置:', {
+        isInputRecording: true,
+        showVoiceModal: true
+      });
+      
+      // 启动录音前再次检查是否已被取消
+      if (this.isInputRecordingCanceled) {
+        console.log('❌ 录音已被取消，不启动录音管理器');
+        return;
+      }
       
       this.recorderManager.start({
         duration: 60000,

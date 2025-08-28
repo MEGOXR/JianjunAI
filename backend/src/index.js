@@ -122,6 +122,38 @@ setInterval(() => {
 // 启动时立即清理一次
 cleanupUtil.cleanupAndReport(tempDir, 60 * 60 * 1000).catch(console.error);
 
+// Azure OpenAI 连接预热
+const warmupAzureOpenAI = async () => {
+  try {
+    console.log('正在预热Azure OpenAI连接...');
+    const { AzureOpenAI } = require('openai');
+    
+    const client = new AzureOpenAI({
+      apiKey: azureApiKey,
+      endpoint: azureEndpoint,
+      apiVersion: azureApiVersion,
+      deployment: azureDeployment,
+    });
+    
+    // 发送一个简单的请求来预热连接
+    const response = await client.chat.completions.create({
+      model: azureDeployment,
+      messages: [{ role: 'user', content: '测试连接' }],
+      max_tokens: 5,
+      temperature: 0
+    });
+    
+    console.log('✅ Azure OpenAI连接预热成功');
+  } catch (error) {
+    console.warn('⚠️ Azure OpenAI连接预热失败（不影响正常服务）:', error.message);
+  }
+};
+
+// 服务器启动后进行预热（非阻塞）
+setTimeout(() => {
+  warmupAzureOpenAI();
+}, 5000); // 延迟5秒启动，避免影响服务器启动速度
+
 // 配置检查端点
 app.get('/config-check', (req, res) => {
   const config = {

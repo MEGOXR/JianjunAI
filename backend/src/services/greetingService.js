@@ -56,6 +56,20 @@ class GreetingService {
   }
 
   /**
+   * 快速判断是否应该发送问候语（基于缓存数据）
+   * 这个方法不会触发文件I/O，适合连接初始化使用
+   */
+  shouldSendGreetingFast(userData) {
+    if (!userData) {
+      // 没有缓存数据，可能是新用户，保守地发送问候语
+      console.log('没有缓存用户数据，发送问候语');
+      return true;
+    }
+    
+    return this.shouldSendGreeting(userData);
+  }
+
+  /**
    * 判断是否应该发送问候语
    * 规则：如果用户在24小时内访问过，则不发送问候语
    */
