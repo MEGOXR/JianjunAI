@@ -16,11 +16,6 @@ class VoiceRecorder {
     this.inputTouchStartTime = 0;
     this.inputTouchStartY = 0;
     
-    // 手指持续按住检测
-    this.isFingerOnButton = false;
-    this.touchCheckTimer = null;
-    this.lastTouchTime = 0;
-    
     this.setupRecorderEvents();
   }
 
@@ -62,50 +57,10 @@ class VoiceRecorder {
       isRecordingCanceling: false
     });
     
-    if (this.page.streamingSpeechManager.getSessionId()) {
-      this.page.streamingSpeechManager.markAsCanceled();
-    }
-    this.page.streamingSpeechManager.endSession();
+    // 直接取消会话
+    this.page.streamingSpeechManager.cancelSession();
   }
 
-  /**
-   * 开始持续检测手指是否还在按钮上
-   */
-  startTouchCheck() {
-    this.lastTouchTime = Date.now();
-    this.touchCheckTimer = setInterval(() => {
-      const timeSinceLastTouch = Date.now() - this.lastTouchTime;
-      // 如果超过100ms没有触摸事件，认为手指已离开
-      if (timeSinceLastTouch > 100) {
-        console.log('检测到手指离开，自动停止录音');
-        this.stopTouchCheck();
-        if (this.page.data.isRecording) {
-          this.stopVoiceRecording();
-        }
-        if (this.page.data.isInputRecording) {
-          this.stopInputRecording();
-        }
-      }
-    }, 50); // 每50ms检查一次
-  }
-
-  /**
-   * 停止持续检测
-   */
-  stopTouchCheck() {
-    if (this.touchCheckTimer) {
-      clearInterval(this.touchCheckTimer);
-      this.touchCheckTimer = null;
-    }
-    this.isFingerOnButton = false;
-  }
-
-  /**
-   * 更新触摸时间（在move事件中调用）
-   */
-  updateTouchTime() {
-    this.lastTouchTime = Date.now();
-  }
 
   // ==================== 语音模式录音 ====================
 
@@ -115,21 +70,16 @@ class VoiceRecorder {
   onVoiceTouchStart(e) {
     this.recordingStartY = e.touches[0].clientY;
     this.voiceTouchStartTime = Date.now();
-    this.isFingerOnButton = true;
     this.page.setData({
       recordingStartY: e.touches[0].clientY,
       isRecordingCanceling: false
     });
     
-    // 恢复50ms快速响应
+    // 保持语音按钮快速响应
     this.voiceLongPressTimer = setTimeout(() => {
-      // 检查手指是否还在按钮上
-      if (this.isFingerOnButton) {
-        this.checkRecordingPermission(() => {
-          this.startVoiceRecording();
-          this.startTouchCheck(); // 开始持续检测
-        });
-      }
+      this.checkRecordingPermission(() => {
+        this.startVoiceRecording();
+      });
     }, 50);
   }
 
@@ -137,9 +87,6 @@ class VoiceRecorder {
    * 语音按钮触摸移动
    */
   onVoiceTouchMove(e) {
-    // 更新触摸时间，表示手指还在按钮上
-    this.updateTouchTime();
-    
     if (!this.page.data.isRecording) return;
     
     const currentY = e.touches[0].clientY;
@@ -148,12 +95,20 @@ class VoiceRecorder {
     
     const shouldCancel = deltaY > cancelThreshold;
     
+    console.log('📍 触摸移动:', {
+      startY: this.recordingStartY,
+      currentY: currentY,
+      deltaY: deltaY,
+      shouldCancel: shouldCancel
+    });
+    
     if (shouldCancel !== this.page.data.isRecordingCanceling) {
       this.page.setData({
         isRecordingCanceling: shouldCancel
       });
       
       if (shouldCancel) {
+        console.log('🚫 进入取消区域');
         wx.vibrateShort();
       }
     }
@@ -163,26 +118,44 @@ class VoiceRecorder {
    * 语音按钮触摸结束
    */
   onVoiceTouchEnd(e) {
-    // 标记手指离开按钮
-    this.isFingerOnButton = false;
-    this.stopTouchCheck();
-    
-    // 清除长按定时器
+    // 清除长按定时器，防止触发录音
     if (this.voiceLongPressTimer) {
       clearTimeout(this.voiceLongPressTimer);
       this.voiceLongPressTimer = null;
     }
     
-    // 如果正在录音，停止录音
-    if (this.page.data.isRecording) {
-      if (this.page.data.isRecordingCanceling) {
-        this.cancelVoiceRecording();
-      } else {
-        this.stopVoiceRecording();
-        this.page.setData({
-          isRecordingCanceling: false
-        });
-      }
+    // 计算触摸持续时间
+    const touchDuration = Date.now() - this.voiceTouchStartTime;
+    
+    console.log('👆 触摸结束:', {
+      duration: touchDuration,
+      isRecording: this.page.data.isRecording,
+      isRecordingCanceling: this.page.data.isRecordingCanceling
+    });
+    
+    // 如果没有开始录音，直接返回（说明是短触摸）
+    if (!this.page.data.isRecording) {
+      console.log('⏱️ 短触摸，未触发录音:', touchDuration + 'ms');
+      return;
+    }
+    
+    // 如果触摸时间少于300ms，认为是误触，取消录音
+    if (touchDuration < 300) {
+      console.log('⏱️ 触摸时间过短，取消录音:', touchDuration + 'ms');
+      this.cancelVoiceRecording();
+      return;
+    }
+    
+    // 正在录音，根据取消状态决定操作
+    if (this.page.data.isRecordingCanceling) {
+      console.log('↑ 用户上滑取消录音');
+      this.cancelVoiceRecording();
+    } else {
+      console.log('✅ 正常结束录音');
+      this.stopVoiceRecording();
+      this.page.setData({
+        isRecordingCanceling: false
+      });
     }
   }
 
@@ -190,15 +163,13 @@ class VoiceRecorder {
    * 语音按钮触摸取消
    */
   onVoiceTouchCancel(e) {
-    // 标记手指离开按钮
-    this.isFingerOnButton = false;
-    this.stopTouchCheck();
-    
     // 清除长按定时器
     if (this.voiceLongPressTimer) {
       clearTimeout(this.voiceLongPressTimer);
       this.voiceLongPressTimer = null;
     }
+    
+    console.log('触摸被系统取消');
     
     // 如果正在录音，取消录音
     if (this.page.data.isRecording) {
@@ -225,25 +196,17 @@ class VoiceRecorder {
     
     this.inputTouchStartTime = Date.now();
     this.inputTouchStartY = e.touches[0].clientY;
-    this.isFingerOnButton = true;
     
-    // 恢复50ms快速响应
+    // 长按100ms触发录音
     this.inputLongPressTimer = setTimeout(() => {
-      // 检查手指是否还在按钮上
-      if (this.isFingerOnButton) {
-        this.startInputRecording();
-        this.startTouchCheck(); // 开始持续检测
-      }
-    }, 50);
+      this.startInputRecording();
+    }, 100);
   }
 
   /**
    * 输入框触摸移动
    */
   onInputTouchMove(e) {
-    // 更新触摸时间，表示手指还在按钮上
-    this.updateTouchTime();
-    
     if (!this.page.data.isInputRecording || this.page.data.userInput || this.page.data.keyboardHeight > 0) return;
     
     const currentY = e.touches[0].clientY;
@@ -267,23 +230,35 @@ class VoiceRecorder {
    * 输入框触摸结束
    */
   onInputTouchEnd(e) {
-    // 标记手指离开按钮
-    this.isFingerOnButton = false;
-    this.stopTouchCheck();
-    
-    // 清除长按定时器
+    // 清除长按定时器，防止触发录音
     if (this.inputLongPressTimer) {
       clearTimeout(this.inputLongPressTimer);
       this.inputLongPressTimer = null;
     }
     
-    // 如果正在录音，停止录音
-    if (this.page.data.isInputRecording) {
-      if (this.page.data.isRecordingCanceling) {
-        this.cancelInputRecording();
-      } else {
-        this.stopInputRecording();
-      }
+    // 计算触摸持续时间
+    const touchDuration = Date.now() - this.inputTouchStartTime;
+    
+    // 如果没有开始录音，直接返回（说明是短触摸）
+    if (!this.page.data.isInputRecording) {
+      console.log('输入框短触摸，未触发录音:', touchDuration + 'ms');
+      return;
+    }
+    
+    // 如果触摸时间少于300ms，认为是误触，取消录音
+    if (touchDuration < 300) {
+      console.log('输入框触摸时间过短，取消录音:', touchDuration + 'ms');
+      this.cancelInputRecording();
+      return;
+    }
+    
+    // 正在录音，根据取消状态决定操作
+    if (this.page.data.isRecordingCanceling) {
+      console.log('输入框用户上滑取消录音');
+      this.cancelInputRecording();
+    } else {
+      console.log('输入框正常结束录音');
+      this.stopInputRecording();
     }
   }
 
@@ -291,15 +266,13 @@ class VoiceRecorder {
    * 输入框触摸取消
    */
   onInputTouchCancel(e) {
-    // 标记手指离开按钮
-    this.isFingerOnButton = false;
-    this.stopTouchCheck();
-    
     // 清除长按定时器
     if (this.inputLongPressTimer) {
       clearTimeout(this.inputLongPressTimer);
       this.inputLongPressTimer = null;
     }
+    
+    console.log('输入框触摸被系统取消');
     
     // 如果正在录音，取消录音
     if (this.page.data.isInputRecording) {
@@ -360,19 +333,20 @@ class VoiceRecorder {
    * 取消语音模式录音
    */
   cancelVoiceRecording() {
+    console.log('🚫 取消语音录音');
+    
+    // 先标记为取消状态
+    this.isCancelingRecording = true;
+    
+    // 停止录音
     this.recorderManager.stop();
     this.stopRecordingTimer();
     this.stopWaveformAnimation();
     
-    this.isCancelingRecording = true;
-    
-    if (this.page.streamingSpeechManager.getSessionId()) {
-      this.page.streamingSpeechManager.markAsCanceled();
-    }
-    
     this.page.setData({
       isRecording: false,
-      showVoiceModal: false
+      showVoiceModal: false,
+      isRecordingCanceling: false // 重置取消状态
     });
     
     wx.showToast({
@@ -427,15 +401,15 @@ class VoiceRecorder {
    * 取消输入框录音
    */
   cancelInputRecording() {
+    console.log('🚫 取消输入框录音');
+    
+    // 先标记为取消状态
+    this.isCancelingRecording = true;
+    
+    // 停止录音
     this.recorderManager.stop();
     this.stopRecordingTimer();
     this.stopWaveformAnimation();
-    
-    this.isCancelingRecording = true;
-    
-    if (this.page.streamingSpeechManager.getSessionId()) {
-      this.page.streamingSpeechManager.markAsCanceled();
-    }
     
     this.page.setData({
       isInputRecording: false,
@@ -656,7 +630,6 @@ class VoiceRecorder {
   cleanup() {
     this.stopRecordingTimer();
     this.stopWaveformAnimation();
-    this.stopTouchCheck(); // 清理触摸检测定时器
     
     if (this.voiceLongPressTimer) {
       clearTimeout(this.voiceLongPressTimer);
