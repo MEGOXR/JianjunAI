@@ -1,845 +1,2253 @@
+# 火山引擎服务集成实施方案
 
+## 项目概述
+本方案旨在将火山引擎的ASR（语音识别）、LLM（大语言模型）和TTS（语音合成）服务集成到现有的医疗咨询应用中，与Azure服务并存，支持灵活切换。
 
-## 语音输入功能实现方案
+## 架构设计
 
-### 需求描述
-实现完整的语音输入功能，包括：
-- 两种语音输入模式：输入框长按说话 & 专用语音模式
-- 录音时的可视化反馈（波形动画）
-- 上滑取消发送手势
-- 语音转文字（STT）并自动显示
-- 完善的权限管理和错误处理
-
-### 功能设计
-
-#### 1. 双模式语音输入
-- **模式一：输入框长按**
-  - 在默认文字输入模式下，长按输入框即可录音
-  - 松开后自动转换为文字
-  
-- **模式二：专用语音模式**
-  - 点击切换按钮进入语音模式
-  - 显示专用的语音按钮界面
-  - 按住录音，松开发送
-
-#### 2. 录音交互流程
-```
-开始录音 → 检查权限 → 显示录音界面 → 实时波形动画
-    ↓
-手指移动 → 判断上滑距离 → 超过阈值显示"松开取消"
-    ↓
-结束录音 → 正常：上传语音 → STT转换 → 显示文字
-         → 取消：清除录音 → 提示已取消
-```
-
-#### 3. UI组件结构
-
-##### 3.1 语音模式界面
-```xml
-<view class="voice-input-area" wx:if="{{isVoiceMode}}">
-  <button class="voice-btn {{isRecording ? 'recording' : ''}}"
-          bindtouchstart="onVoiceTouchStart"
-          bindtouchmove="onVoiceTouchMove"
-          bindtouchend="onVoiceTouchEnd">
-    <text>{{recordingText}}</text>
-  </button>
-  <image class="mode-switch" src="/images/keyboard.png" bindtap="switchToText"/>
-</view>
-```
-
-##### 3.2 录音悬浮层
-```xml
-<view class="voice-modal" wx:if="{{showVoiceModal}}">
-  <!-- 波形可视化 -->
-  <view class="waveform-container">
-    <view wx:for="{{waveformData}}" class="waveform-bar" 
-          style="height:{{item}}%"></view>
-  </view>
-  
-  <!-- 录音信息 -->
-  <text class="recording-duration">{{recordingDuration}}s</text>
-  <text class="recording-hint">{{isRecordingCanceling ? '松开取消' : '正在录音...'}}</text>
-  
-  <!-- 上滑提示 -->
-  <view class="cancel-hint" wx:if="{{!isRecordingCanceling}}">
-    <image src="/images/arrow-up.png"/>
-    <text>上滑取消</text>
-  </view>
-</view>
-```
-
-#### 4. 核心功能实现
-
-##### 4.1 录音管理器配置
-```javascript
-const recorderManager = wx.getRecorderManager();
-const options = {
-  duration: 60000,      // 最长60秒
-  sampleRate: 16000,    // 16kHz采样率（语音识别标准）
-  numberOfChannels: 1,  // 单声道
-  encodeBitRate: 48000, // 48kbps码率
-  format: 'mp3'         // MP3格式
-};
-```
-
-##### 4.2 手势处理逻辑
-```javascript
-// 触摸开始 - 开始录音
-onVoiceTouchStart(e) {
-  this.recordingStartY = e.touches[0].clientY;
-  this.checkPermission(() => this.startRecording());
-}
-
-// 触摸移动 - 检测上滑
-onVoiceTouchMove(e) {
-  const deltaY = this.recordingStartY - e.touches[0].clientY;
-  const shouldCancel = deltaY > 100; // 上滑100px触发取消
-  
-  if (shouldCancel !== this.data.isRecordingCanceling) {
-    this.setData({ isRecordingCanceling: shouldCancel });
-    if (shouldCancel) wx.vibrateShort(); // 震动反馈
-  }
-}
-
-// 触摸结束 - 完成或取消
-onVoiceTouchEnd(e) {
-  if (this.data.isRecordingCanceling) {
-    this.cancelRecording();
-  } else {
-    this.stopRecording();
-  }
-}
-```
-
-##### 4.3 波形动画实现
-```javascript
-// 生成波形数据
-startWaveformAnimation() {
-  this.waveformTimer = setInterval(() => {
-    const waveformData = Array(20).fill(0).map(() => 
-      Math.random() * 80 + 20  // 20-100%高度
-    );
-    this.setData({ waveformData });
-  }, 100);
-}
-```
-
-##### 4.4 语音转文字(STT)
-```javascript
-uploadVoice(tempFilePath) {
-  wx.uploadFile({
-    url: `${baseUrl}/api/speech-to-text`,
-    filePath: tempFilePath,
-    name: 'audio',
-    header: { 'Authorization': `Bearer ${token}` },
-    success: (res) => {
-      const result = JSON.parse(res.data);
-      if (result.text) {
-        this.handleSTTSuccess(result.text);
-      }
-    }
-  });
-}
-
-handleSTTSuccess(text) {
-  // 显示识别结果供确认
-  wx.showModal({
-    title: '识别结果',
-    content: text,
-    confirmText: '发送',
-    cancelText: '编辑',
-    success: (res) => {
-      if (res.confirm) {
-        this.setData({ userInput: text });
-        this.sendMessage();
-      }
-    }
-  });
-}
-```
-
-#### 5. 样式设计
-
-```css
-/* 录音按钮动画 */
-.voice-btn.recording {
-  animation: recordingPulse 1.5s infinite;
-  background: linear-gradient(45deg, #FF6B6B, #FF8E53);
-}
-
-@keyframes recordingPulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
-}
-
-/* 波形条动画 */
-.waveform-bar {
-  background: linear-gradient(to top, #007AFF, #40A9FF);
-  transition: height 0.1s ease;
-  animation: waveformGlow 0.5s ease-in-out infinite alternate;
-}
-
-@keyframes waveformGlow {
-  from { opacity: 0.7; }
-  to { opacity: 1; }
-}
-
-/* 取消状态样式 */
-.voice-modal-content.canceling {
-  background: #FF6B6B;
-  animation: cancelShake 0.3s;
-}
-
-@keyframes cancelShake {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-5px); }
-  75% { transform: translateX(5px); }
-}
-```
-
-#### 6. 权限管理
-
-```javascript
-checkRecordingPermission(callback) {
-  wx.getSetting({
-    success: (res) => {
-      if (!res.authSetting['scope.record']) {
-        wx.authorize({
-          scope: 'scope.record',
-          success: callback,
-          fail: () => this.showPermissionDialog()
-        });
-      } else {
-        callback();
-      }
-    }
-  });
-}
-
-showPermissionDialog() {
-  wx.showModal({
-    title: '需要录音权限',
-    content: '请在设置中开启录音权限',
-    confirmText: '去设置',
-    success: (res) => {
-      if (res.confirm) wx.openSetting();
-    }
-  });
-}
-```
-
-#### 7. 错误处理
-
-- 录音时长限制：最短1秒，最长60秒
-- 网络错误：重试机制和离线缓存
-- 权限拒绝：引导用户开启权限
-- STT失败：提供手动输入选项
-- 系统中断：自动保存和恢复
-
-### 实施步骤
-
-1. **第一阶段：基础录音功能**
-   - 实现录音权限检查
-   - 添加按住录音按钮
-   - 实现基本的录音开始/结束
-
-2. **第二阶段：交互优化**
-   - 添加上滑取消手势
-   - 实现录音时长显示
-   - 添加震动反馈
-
-3. **第三阶段：视觉效果**
-   - 实现波形动画
-   - 添加录音悬浮层
-   - 优化过渡动画
-
-4. **第四阶段：语音转文字**
-   - 对接STT服务接口
-   - 实现识别结果确认
-   - 添加编辑功能
-
-5. **第五阶段：完善体验**
-   - 优化错误处理
-   - 添加使用引导
-   - 性能优化
-
-### 后端实现方案
-
-#### 1. 技术选型
-
-**语音识别服务选择**：
-- **Azure Cognitive Services Speech SDK** - 与现有Azure OpenAI集成良好
-- 支持中文识别，准确率高
-- 提供实时流式识别和批量识别两种模式
-
-**依赖安装**：
-```bash
-cd backend
-npm install --save microsoft-cognitiveservices-speech-sdk
-npm install --save multer  # 文件上传处理
-npm install --save uuid     # 生成唯一文件名
-```
-
-#### 2. 环境配置
-
-在 `.env` 文件中添加 Azure Speech Service 配置：
-```env
-# 现有配置
-AZURE_OPENAI_ENDPOINT=xxx
-AZURE_OPENAI_API_KEY=xxx
-OPENAI_API_VERSION=xxx
-AZURE_OPENAI_DEPLOYMENT_NAME=xxx
-
-# 新增 Speech Service 配置
-AZURE_SPEECH_KEY=your-speech-service-key
-AZURE_SPEECH_REGION=eastasia
-AZURE_SPEECH_LANGUAGE=zh-CN
-```
-
-#### 3. 文件结构
+### 1. 服务提供者抽象层
+创建统一的服务接口，支持多个云服务提供商：
 
 ```
 backend/
 ├── src/
-│   ├── controllers/
-│   │   └── speechController.js     # 新增：语音识别控制器
-│   ├── services/
-│   │   └── speechService.js        # 新增：语音识别服务
-│   ├── middleware/
-│   │   └── upload.js               # 新增：文件上传中间件
-│   ├── routes/
-│   │   └── speechRoutes.js         # 新增：语音路由
-│   └── temp/                       # 新增：临时音频文件目录
+│   ├── providers/                   # 新增provider层（不影响现有结构）
+│   │   ├── base/                    # 基础抽象接口
+│   │   │   ├── LLMProvider.js       # LLM服务接口
+│   │   │   ├── ASRProvider.js       # ASR服务接口
+│   │   │   └── TTSProvider.js       # TTS服务接口
+│   │   ├── azure/                   # Azure实现
+│   │   │   ├── AzureLLMProvider.js
+│   │   │   ├── AzureASRProvider.js
+│   │   │   └── AzureTTSProvider.js
+│   │   └── volcengine/              # 火山引擎实现
+│   │       ├── VolcengineLLMProvider.js
+│   │       ├── VolcengineASRProvider.js
+│   │       └── VolcengineTTSProvider.js
+│   ├── controllers/                 # 保持不变（仅调整调用方式）
+│   │   ├── chatController.js        # 需要小幅重构
+│   │   └── speechController.js      # 需要小幅重构
+│   ├── services/                    # 保持不变（新增2个文件）
+│   │   ├── ProviderFactory.js       # 新增：服务工厂
+│   │   ├── ConfigService.js         # 新增：配置管理
+│   │   ├── greetingService.js       # 无需改动
+│   │   ├── nameExtractorService.js  # 无需改动
+│   │   ├── promptService.js         # 无需改动
+│   │   ├── speechService.js         # 需要重构为使用Provider
+│   │   ├── suggestionService.js     # 无需改动
+│   │   ├── userDataService.js       # 无需改动
+│   │   └── warmupService.js         # 无需改动
+│   ├── middleware/                  # 完全不受影响
+│   ├── routes/                      # 完全不受影响
+│   └── utils/                       # 完全不受影响
 ```
 
-#### 4. 核心代码实现
+### 2. 配置管理
+支持通过环境变量灵活切换服务提供商：
 
-##### 4.1 文件上传中间件 (`src/middleware/upload.js`)
+```env
+# 服务提供商选择
+PROVIDER_TYPE=volcengine  # 可选值: azure, volcengine
 
+# Azure 配置（保持现有）
+AZURE_OPENAI_ENDPOINT=xxx
+AZURE_OPENAI_API_KEY=xxx
+AZURE_SPEECH_KEY=xxx
+AZURE_SPEECH_REGION=xxx
+
+# 火山引擎配置
+VOLCENGINE_ACCESS_KEY=xxx
+VOLCENGINE_SECRET_KEY=xxx
+VOLCENGINE_REGION=cn-north-1
+VOLCENGINE_APP_ID=xxx
+VOLCENGINE_APP_KEY=xxx
+
+# 火山引擎服务端点
+VOLCENGINE_LLM_ENDPOINT=https://open.volcengineapi.com
+VOLCENGINE_ASR_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel
+VOLCENGINE_TTS_ENDPOINT=http://cloud-vms.volcengineapi.com
+```
+
+## 对现有代码的影响分析
+
+### 需要修改的文件
+1. **chatController.js** - 将直接调用Azure OpenAI改为使用LLMProvider（约100行代码调整）
+2. **speechService.js** - 将Azure Speech SDK调用改为使用ASR/TTSProvider（约150行代码调整）
+3. **speechController.js** - 调整为调用重构后的speechService（约10行代码调整）
+
+### 无需修改的文件
+- 所有middleware文件 - 完全不受影响
+- 所有routes文件 - 完全不受影响
+- 大部分services文件 - 保持原有逻辑不变
+- utils文件 - 完全不受影响
+
+### 改动示例
 ```javascript
-const multer = require('multer');
-const path = require('path');
-const { v4: uuidv4 } = require('uuid');
-const fs = require('fs').promises;
-
-// 确保临时目录存在
-const tempDir = path.join(__dirname, '../../temp');
-fs.mkdir(tempDir, { recursive: true }).catch(console.error);
-
-// 配置 multer 存储
-const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    cb(null, tempDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = `${uuidv4()}-${Date.now()}.mp3`;
-    cb(null, uniqueName);
-  }
+// chatController.js 改动前
+const { AzureOpenAI } = require("openai");
+const client = new AzureOpenAI({
+  apiKey, endpoint, apiVersion, deployment
 });
+const stream = await client.chat.completions.create({...});
 
-// 文件过滤器
-const fileFilter = (req, file, cb) => {
-  // 只接受音频文件
-  const allowedMimeTypes = [
-    'audio/mpeg',
-    'audio/mp3',
-    'audio/wav',
-    'audio/x-m4a',
-    'audio/webm'
-  ];
+// chatController.js 改动后
+const { ProviderFactory } = require('../services/ProviderFactory');
+const llmProvider = ProviderFactory.getLLMProvider();
+const stream = await llmProvider.createChatStream({
+  messages: history,
+  options: { maxTokens: 2000, temperature: 0.5 }
+});
+```
+
+## 实施步骤（PRP格式）
+
+### 阶段0：准备工作
+
+#### Task 0.1: 环境变量配置准备
+**目标**: 准备火山引擎和Azure的配置
+**责任人**: 用户手动配置
+**输出**: 完整的.env文件
+
+**具体步骤**:
+```bash
+# 1. 创建.env文件（如果不存在）
+cp backend/.env.example backend/.env
+
+# 2. 添加火山引擎配置（用户提供）
+VOLCENGINE_ACCESS_KEY=<您的Access Key>
+VOLCENGINE_SECRET_KEY=<您的Secret Key>
+VOLCENGINE_APP_ID=<您的AppId>
+VOLCENGINE_APP_KEY=<您的AppKey>
+VOLCENGINE_REGION=cn-north-1
+
+# 3. 确认Azure配置仍然存在
+# 4. 添加Provider类型配置（默认先使用azure）
+PROVIDER_TYPE=azure  # 初始保持azure，后续可切换
+```
+
+**验证点**: 
+- [ ] 用户确认：火山引擎API密钥已配置
+- [ ] 用户确认：现有Azure服务正常运行
+
+---
+
+### 第一阶段：服务抽象层开发（不影响现有服务）
+
+#### Task 1.1: 创建Provider基础接口
+**目标**: 建立统一的服务接口标准
+**输入**: 现有Azure服务的API结构
+**输出**: 三个基础接口文件
+**风险**: 低（仅新增文件，不影响现有代码）
+
+**具体步骤**:
+```bash
+# 1. 创建目录结构
+mkdir -p backend/src/providers/base
+mkdir -p backend/src/providers/azure
+mkdir -p backend/src/providers/volcengine
+
+# 2. 创建LLMProvider.js基础接口
+# 文件: backend/src/providers/base/LLMProvider.js
+class LLMProvider {
+  async createChatStream(messages, options) { throw new Error('Not implemented'); }
+  async createCompletion(prompt, options) { throw new Error('Not implemented'); }
+  async validateConfig() { throw new Error('Not implemented'); }
+  async healthCheck() { throw new Error('Not implemented'); }
+}
+
+# 3. 创建ASRProvider.js基础接口  
+# 文件: backend/src/providers/base/ASRProvider.js
+class ASRProvider {
+  async startStreamingRecognition(sessionId, config) { throw new Error('Not implemented'); }
+  async processAudioFrame(sessionId, audioBuffer) { throw new Error('Not implemented'); }
+  async endStreamingRecognition(sessionId) { throw new Error('Not implemented'); }
+  async speechToText(audioFile) { throw new Error('Not implemented'); }
+}
+
+# 4. 创建TTSProvider.js基础接口
+# 文件: backend/src/providers/base/TTSProvider.js
+class TTSProvider {
+  async textToSpeech(text, options) { throw new Error('Not implemented'); }
+  async streamTextToSpeech(text, options) { throw new Error('Not implemented'); }
+  getSupportedVoices() { throw new Error('Not implemented'); }
+}
+```
+
+**测试验证**:
+```bash
+# 运行语法检查
+cd backend
+npm run lint  # 确保新文件符合代码规范
+```
+
+**用户验证点**: 
+- [ ] 确认：目录结构创建成功
+- [ ] 确认：基础接口文件无语法错误
+
+**Commit节点**: ✅ `git commit -m "feat: add provider base interfaces"`
+
+#### Task 1.2: 实现Azure Provider适配器
+**目标**: 将现有Azure代码封装为Provider
+**输入**: chatController.js和speechService.js中的Azure代码
+**输出**: 三个Azure Provider实现
+**风险**: 低（封装现有逻辑，不改变功能）
+
+**具体步骤**:
+```javascript
+# 1. 创建AzureLLMProvider.js
+# 文件: backend/src/providers/azure/AzureLLMProvider.js
+const { AzureOpenAI } = require("openai");
+const LLMProvider = require('../base/LLMProvider');
+
+class AzureLLMProvider extends LLMProvider {
+  constructor(config) {
+    super();
+    this.config = config;
+    this.client = null;
+  }
   
-  if (allowedMimeTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('只支持音频文件格式'), false);
+  async initialize() {
+    // 从chatController.js第272-277行提取
+    this.client = new AzureOpenAI({
+      apiKey: this.config.apiKey,
+      endpoint: this.config.endpoint,
+      apiVersion: this.config.apiVersion,
+      deployment: this.config.deployment
+    });
+  }
+  
+  async createChatStream(messages, options = {}) {
+    // 从chatController.js第289-298行提取
+    return await this.client.chat.completions.create({
+      model: this.config.deployment,
+      messages: messages,
+      stream: true,
+      max_tokens: options.maxTokens || 2000,
+      temperature: options.temperature || 0.5,
+      ...options
+    });
+  }
+  
+  async validateConfig() {
+    return !!(this.config.apiKey && this.config.endpoint);
+  }
+  
+  async healthCheck() {
+    try {
+      await this.client.chat.completions.create({
+        model: this.config.deployment,
+        messages: [{role: "user", content: "test"}],
+        max_tokens: 1
+      });
+      return { status: 'healthy' };
+    } catch (error) {
+      return { status: 'unhealthy', error: error.message };
+    }
+  }
+}
+
+# 2. 创建AzureASRProvider.js （简化示例）
+# 3. 创建AzureTTSProvider.js （简化示例）
+```
+
+**单元测试**:
+```javascript
+# 文件: backend/tests/providers/azure.test.js
+const AzureLLMProvider = require('../../src/providers/azure/AzureLLMProvider');
+
+describe('AzureLLMProvider', () => {
+  test('should validate config correctly', async () => {
+    const provider = new AzureLLMProvider({
+      apiKey: 'test-key',
+      endpoint: 'test-endpoint'
+    });
+    expect(await provider.validateConfig()).toBe(true);
+  });
+});
+```
+
+**测试验证**:
+```bash
+# 1. 运行单元测试
+npm test -- azure.test.js
+
+# 2. 测试现有功能是否正常（不切换Provider）
+npm run dev
+# 发送测试消息，确认Azure服务仍正常工作
+```
+
+**用户验证点**: 
+- [ ] 确认：Provider文件创建成功
+- [ ] 确认：单元测试通过
+- [ ] 确认：现有Azure功能未受影响
+
+**Commit节点**: ✅ `git commit -m "feat: implement Azure provider adapters"`
+
+#### Task 1.3: 创建服务工厂和配置管理
+**目标**: 实现服务动态选择机制
+**输入**: 环境变量配置
+**输出**: ProviderFactory.js和ConfigService.js
+**风险**: 低（新增服务层，不影响现有逻辑）
+
+**具体步骤**:
+```javascript
+# 1. 创建ConfigService.js
+# 文件: backend/src/services/ConfigService.js
+class ConfigService {
+  static getProviderType() {
+    return process.env.PROVIDER_TYPE || 'azure';
+  }
+  
+  static getProviderConfig(type) {
+    if (type === 'azure') {
+      return {
+        apiKey: process.env.AZURE_OPENAI_API_KEY,
+        endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+        apiVersion: process.env.OPENAI_API_VERSION,
+        deployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
+        speechKey: process.env.AZURE_SPEECH_KEY,
+        speechRegion: process.env.AZURE_SPEECH_REGION
+      };
+    } else if (type === 'volcengine') {
+      return {
+        accessKey: process.env.VOLCENGINE_ACCESS_KEY,
+        secretKey: process.env.VOLCENGINE_SECRET_KEY,
+        appId: process.env.VOLCENGINE_APP_ID,
+        appKey: process.env.VOLCENGINE_APP_KEY,
+        region: process.env.VOLCENGINE_REGION
+      };
+    }
+    throw new Error(`Unknown provider type: ${type}`);
+  }
+  
+  static validateConfig(type, config) {
+    // 验证必要字段
+    if (type === 'azure') {
+      return !!(config.apiKey && config.endpoint);
+    } else if (type === 'volcengine') {
+      return !!(config.accessKey && config.secretKey);
+    }
+    return false;
+  }
+}
+
+# 2. 创建ProviderFactory.js（单例模式）
+# 文件: backend/src/services/ProviderFactory.js
+const ConfigService = require('./ConfigService');
+
+class ProviderFactory {
+  static instances = {};
+  
+  static getLLMProvider() {
+    const type = ConfigService.getProviderType();
+    const key = `llm_${type}`;
+    
+    if (!this.instances[key]) {
+      const config = ConfigService.getProviderConfig(type);
+      if (type === 'azure') {
+        const AzureLLMProvider = require('../providers/azure/AzureLLMProvider');
+        this.instances[key] = new AzureLLMProvider(config);
+      } else if (type === 'volcengine') {
+        const VolcengineLLMProvider = require('../providers/volcengine/VolcengineLLMProvider');
+        this.instances[key] = new VolcengineLLMProvider(config);
+      }
+      this.instances[key].initialize();
+    }
+    
+    return this.instances[key];
+  }
+  
+  // 类似实现 getASRProvider() 和 getTTSProvider()
+}
+```
+
+**集成测试**:
+```bash
+# 文件: backend/tests/integration/provider-factory.test.js
+# 测试Provider工厂是否正确返回实例
+# 测试配置验证
+# 测试Provider切换
+```
+
+**用户验证点**: 
+- [ ] 确认：ConfigService正确读取环境变量
+- [ ] 确认：ProviderFactory能返回Azure Provider
+- [ ] 确认：单例模式工作正常
+
+**Commit节点**: ✅ `git commit -m "feat: add provider factory and config service"`
+
+#### Task 1.4: 重构chatController.js（渐进式）
+**目标**: 使用Provider替代直接调用Azure SDK
+**输入**: 现有的chatController.js
+**输出**: 重构后的chatController.js
+**风险**: 中（修改核心逻辑，需要充分测试）
+
+**具体步骤**:
+```javascript
+# 1. 备份原文件
+cp backend/src/controllers/chatController.js backend/src/controllers/chatController.js.backup
+
+# 2. 创建兼容性包装函数（保证平滑过渡）
+# 文件: backend/src/controllers/chatController.js
+# 在文件顶部添加feature flag
+const USE_PROVIDER = process.env.USE_PROVIDER === 'true'; // 默认false
+
+// 保留原有import
+const { AzureOpenAI } = require("openai");
+// 添加新import（条件加载）
+const ProviderFactory = USE_PROVIDER ? require('../services/ProviderFactory') : null;
+
+# 3. 修改sendMessage函数（保持向后兼容）
+exports.sendMessage = async (ws, prompt) => {
+  try {
+    let stream;
+    
+    if (USE_PROVIDER) {
+      // 新方式：使用Provider
+      const llmProvider = ProviderFactory.getLLMProvider();
+      await llmProvider.initialize();
+      stream = await llmProvider.createChatStream(history, {
+        maxTokens: 2000,
+        temperature: 0.5
+      });
+    } else {
+      // 原方式：直接使用Azure SDK（第272-298行保持不变）
+      validateAzureConfig();
+      const client = new AzureOpenAI({...});
+      stream = await client.chat.completions.create({...});
+    }
+    
+    // 流式处理逻辑保持不变（第303-327行）
+    for await (const chunk of stream) {
+      // ... 原有逻辑
+    }
+  } catch (error) {
+    // 错误处理保持不变
+  }
+}
+```
+
+**分阶段测试计划**:
+```bash
+# 阶段1：不启用Provider（确保兼容性）
+USE_PROVIDER=false npm run dev
+# 测试现有功能
+
+# 阶段2：启用Provider但使用Azure
+USE_PROVIDER=true PROVIDER_TYPE=azure npm run dev  
+# 测试Provider模式下的Azure
+
+# 阶段3：完全切换测试
+# 对比两种模式的响应
+```
+
+**用户验证点**: 
+- [ ] 确认：备份文件创建成功
+- [ ] 确认：USE_PROVIDER=false时功能正常
+- [ ] 确认：USE_PROVIDER=true时功能正常
+- [ ] 确认：响应时间和质量无明显差异
+
+**Commit节点**: ✅ `git commit -m "feat: add provider support to chatController with feature flag"`
+
+---
+
+### 🔄 中期验证节点
+
+**综合测试**（Task 1.1-1.4完成后）:
+```bash
+# 完整的端到端测试
+npm run test:e2e
+
+# 性能基准测试
+npm run benchmark
+
+# 代码覆盖率检查
+npm run coverage
+```
+
+**用户确认清单**:
+- [ ] Azure服务仍然正常工作
+- [ ] 新代码没有破坏现有功能
+- [ ] 性能没有明显下降
+- [ ] 准备进入火山引擎集成阶段
+
+**重要Commit**: ✅ `git commit -m "feat: complete provider abstraction layer"`
+**创建标签**: `git tag -a v1.0-provider-ready -m "Provider abstraction layer complete"`
+
+### 第二阶段：火山引擎服务集成
+
+#### Task 2.1: 安装和配置火山引擎SDK
+**目标**: 集成火山引擎Node.js SDK
+**输入**: package.json
+**输出**: 更新的依赖和配置文件
+
+**具体步骤**:
+```bash
+# 1. 安装火山引擎SDK
+cd backend
+npm install @volcengine/openapi --save
+npm install @volcengine/rtc-sdk --save
+
+# 2. 创建火山引擎配置文件
+# 文件: backend/src/config/volcengine.config.js
+# - 配置认证参数（AK/SK）
+# - 配置服务端点
+# - 配置超时和重试参数
+
+# 3. 更新.env.example
+# 添加火山引擎相关环境变量示例
+```
+
+#### Task 2.2: 实现VolcengineLLMProvider
+**目标**: 实现火山引擎大模型接口
+**输入**: 火山引擎API文档
+**输出**: VolcengineLLMProvider.js
+
+**具体步骤**:
+```bash
+# 文件: backend/src/providers/volcengine/VolcengineLLMProvider.js
+
+# 1. 初始化火山引擎客户端
+# - 使用@volcengine/openapi创建客户端
+# - 配置认证信息
+# - 设置服务地址
+
+# 2. 实现createChatStream方法
+# - 转换消息格式为火山引擎格式
+# - 调用火山引擎流式API
+# - 处理流式响应，转换为统一格式
+# - 实现错误处理
+
+# 3. 实现token计算和上下文管理
+# - 实现消息历史管理
+# - 控制token使用量
+```
+
+#### Task 2.3: 实现VolcengineASRProvider（双向流式模式）
+**目标**: 实现火山引擎语音识别（使用双向流式优化版本）
+**输入**: 火山引擎大模型流式语音识别API文档
+**输出**: VolcengineASRProvider.js
+
+**API端点信息**:
+- **双向流式模式**: `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel`
+- **特点**: 尽快返回识别字符，速度优先，适合实时对话
+
+**具体步骤**:
+```javascript
+# 文件: backend/src/providers/volcengine/VolcengineASRProvider.js
+
+# 1. WebSocket连接建立
+const WebSocket = require('ws');
+const crypto = require('crypto');
+
+class VolcengineASRProvider extends ASRProvider {
+  constructor(config) {
+    super();
+    this.config = {
+      accessKey: config.accessKey,
+      secretKey: config.secretKey, 
+      appId: config.speechAppId,
+      cluster: 'volcengine_streaming_common',
+      wsUrl: 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel'
+    };
+    this.sessions = new Map(); // 管理多个会话
+  }
+
+# 2. 实现认证和连接协议
+  async startStreamingRecognition(sessionId, options = {}) {
+    const ws = new WebSocket(this.config.wsUrl);
+    const session = {
+      ws,
+      sessionId,
+      state: 'connecting',
+      buffer: [],
+      onResult: options.onResult || (() => {}),
+      onFinal: options.onFinal || (() => {}),
+      onError: options.onError || (() => {})
+    };
+    
+    this.sessions.set(sessionId, session);
+    
+    ws.on('open', () => {
+      // 发送Full Client Request（首包）
+      const payload = {
+        app: {
+          appid: this.config.appId,
+          token: this.generateToken(),
+          cluster: this.config.cluster
+        },
+        user: {
+          uid: sessionId
+        },
+        audio: {
+          format: "wav",
+          rate: 16000,
+          channel: 1,
+          bits: 16,
+          language: "zh-CN"
+        },
+        request: {
+          reqid: this.generateReqId(),
+          nbest: 1,
+          continuous_decoding: true, // 双向流式关键配置
+          sequence: 1,
+          sub_protocol_name: "full_client_request"
+        }
+      };
+      
+      this.sendMessage(ws, payload, 'full_client_request');
+      session.state = 'connected';
+    });
+    
+    ws.on('message', (data) => {
+      this.handleMessage(session, data);
+    });
+    
+    ws.on('error', (error) => {
+      session.onError(error);
+      this.sessions.delete(sessionId);
+    });
+    
+    return session;
+  }
+
+# 3. 消息处理和协议实现
+  sendMessage(ws, payload, messageType = 'audio') {
+    const payloadBytes = Buffer.from(JSON.stringify(payload), 'utf8');
+    const header = Buffer.alloc(4);
+    
+    // 协议头：4字节（消息类型1字节 + 负载大小3字节）
+    if (messageType === 'full_client_request') {
+      header.writeUInt8(0x11, 0); // Full client request
+    } else if (messageType === 'audio') {
+      header.writeUInt8(0x10, 0); // Audio only client request
+    }
+    
+    // 写入负载大小（小端序）
+    header.writeUIntLE(payloadBytes.length, 1, 3);
+    
+    const message = Buffer.concat([header, payloadBytes]);
+    ws.send(message);
+  }
+
+# 4. 音频数据处理（200ms为单包最佳性能）
+  async processAudioFrame(sessionId, audioBuffer) {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.state !== 'connected') {
+      throw new Error('Session not connected');
+    }
+    
+    // 将音频数据分包，每包约200ms（3200字节 for 16kHz 16bit mono）
+    const chunkSize = 3200;
+    let offset = 0;
+    
+    while (offset < audioBuffer.length) {
+      const chunk = audioBuffer.slice(offset, offset + chunkSize);
+      const payload = {
+        audio: chunk.toString('base64'),
+        sequence: ++session.sequence || 1
+      };
+      
+      this.sendMessage(session.ws, payload, 'audio');
+      offset += chunkSize;
+      
+      // 避免发送过快
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  }
+
+# 5. 结果处理（双向流式特性）
+  handleMessage(session, rawData) {
+    try {
+      // 解析协议头
+      const header = rawData.slice(0, 4);
+      const messageType = header.readUInt8(0);
+      const payloadSize = header.readUIntLE(1, 3);
+      const payload = rawData.slice(4, 4 + payloadSize);
+      
+      const response = JSON.parse(payload.toString('utf8'));
+      
+      if (response.result) {
+        // 双向流式：实时返回部分结果
+        if (response.result.is_final === false) {
+          session.onResult({
+            text: response.result.text,
+            confidence: response.result.confidence,
+            isFinal: false,
+            timestamp: Date.now()
+          });
+        } else {
+          // 最终结果
+          session.onFinal({
+            text: response.result.text,
+            confidence: response.result.confidence,
+            isFinal: true,
+            duration: response.result.duration || 0
+          });
+        }
+      }
+      
+      if (response.error) {
+        session.onError(new Error(response.error.message));
+      }
+    } catch (error) {
+      session.onError(error);
+    }
+  }
+
+# 6. 会话结束和清理
+  async endStreamingRecognition(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      // 发送结束标记（负包）
+      const endPayload = {
+        sequence: -1 // 负包标记会话结束
+      };
+      
+      this.sendMessage(session.ws, endPayload, 'audio');
+      
+      // 等待最终结果
+      setTimeout(() => {
+        session.ws.close();
+        this.sessions.delete(sessionId);
+      }, 1000);
+    }
+  }
+
+# 7. 辅助方法
+  generateToken() {
+    // 基于AccessKey和SecretKey生成认证token
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signString = `${this.config.accessKey}${timestamp}`;
+    return crypto.createHmac('sha256', this.config.secretKey)
+                 .update(signString).digest('hex');
+  }
+  
+  generateReqId() {
+    return crypto.randomBytes(16).toString('hex');
+  }
+}
+
+module.exports = VolcengineASRProvider;
+```
+
+**关键技术点**:
+1. **双向流式**: 设置`continuous_decoding: true`启用双向流式模式
+2. **最佳性能**: 单包200ms音频数据（3200字节）获得最佳性能
+3. **实时响应**: `is_final: false`的结果实时返回，提供流畅体验
+4. **协议头**: 4字节协议头包含消息类型和负载大小
+5. **会话管理**: 支持多会话并发，每个会话独立管理
+6. **错误处理**: 完整的连接错误和解析错误处理机制
+
+**测试验证**:
+```bash
+# 单元测试
+npm test -- volcengine-asr.test.js
+
+# 集成测试：测试200ms音频包处理性能
+# 验证双向流式实时返回功能
+# 测试多会话并发处理
+```
+
+**用户验证点**: 
+- [ ] 确认：WebSocket连接建立成功
+- [ ] 确认：音频实时识别工作正常
+- [ ] 确认：双向流式模式性能最优
+- [ ] 确认：多会话并发无问题
+
+#### Task 2.4: 实现VolcengineTTSProvider
+**目标**: 实现火山引擎语音合成
+**输入**: 火山引擎TTS API文档
+**输出**: VolcengineTTSProvider.js
+
+**API端点信息**:
+- **TTS API**: `https://openspeech.bytedance.com/api/v1/tts`
+- **特点**: 支持流式合成，多种音色，实时语音生成
+
+**具体步骤**:
+```javascript
+# 文件: backend/src/providers/volcengine/VolcengineTTSProvider.js
+
+const https = require('https');
+const crypto = require('crypto');
+const TTSProvider = require('../base/TTSProvider');
+
+class VolcengineTTSProvider extends TTSProvider {
+  constructor(config) {
+    super();
+    this.config = {
+      accessKey: config.accessKey,
+      secretKey: config.secretKey,
+      appId: config.speechAppId,
+      cluster: 'volcano_tts',
+      endpoint: 'https://openspeech.bytedance.com/api/v1/tts'
+    };
+  }
+
+# 1. 实现文本转语音（基础方法）
+  async textToSpeech(text, options = {}) {
+    const requestData = {
+      app: {
+        appid: this.config.appId,
+        token: this.generateToken(),
+        cluster: this.config.cluster
+      },
+      user: {
+        uid: options.userId || 'default_user'
+      },
+      audio: {
+        voice_type: options.voiceType || 'zh_female_shuangkuai_moon_bigtts', // 默认专业女声
+        encoding: options.encoding || 'wav',
+        speed_ratio: options.speed || 1.0,
+        volume_ratio: options.volume || 1.0,
+        pitch_ratio: options.pitch || 1.0
+      },
+      request: {
+        reqid: this.generateReqId(),
+        text: text,
+        text_type: 'plain',
+        operation: 'query',
+        with_frontend: 1,
+        frontend_type: 'unitTson'
+      }
+    };
+
+    return new Promise((resolve, reject) => {
+      const postData = JSON.stringify(requestData);
+      const options = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData),
+          'Authorization': `Bearer ${this.generateToken()}`
+        }
+      };
+
+      const req = https.request(this.config.endpoint, options, (res) => {
+        const chunks = [];
+        res.on('data', (chunk) => chunks.push(chunk));
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            const audioBuffer = Buffer.concat(chunks);
+            resolve({
+              audioBuffer,
+              format: requestData.audio.encoding,
+              sampleRate: 16000,
+              duration: this.calculateDuration(text)
+            });
+          } else {
+            reject(new Error(`TTS API error: ${res.statusCode}`));
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.write(postData);
+      req.end();
+    });
+  }
+
+# 2. 实现流式TTS（长文本优化）
+  async streamTextToSpeech(text, options = {}) {
+    const maxChunkLength = 200; // 单次TTS文本限制
+    const chunks = this.splitText(text, maxChunkLength);
+    const audioChunks = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const result = await this.textToSpeech(chunk, {
+        ...options,
+        userId: options.userId || 'stream_user'
+      });
+      
+      audioChunks.push(result.audioBuffer);
+      
+      // 流式返回
+      if (options.onChunk) {
+        options.onChunk({
+          index: i,
+          total: chunks.length,
+          audioBuffer: result.audioBuffer,
+          text: chunk,
+          isLast: i === chunks.length - 1
+        });
+      }
+    }
+
+    // 合并所有音频片段
+    const combinedBuffer = Buffer.concat(audioChunks);
+    return {
+      audioBuffer: combinedBuffer,
+      format: options.encoding || 'wav',
+      sampleRate: 16000,
+      chunks: audioChunks.length
+    };
+  }
+
+# 3. 获取支持的音色列表
+  getSupportedVoices() {
+    return [
+      {
+        id: 'zh_female_shuangkuai_moon_bigtts',
+        name: '爽快-月',
+        gender: 'female',
+        language: 'zh-CN',
+        description: '专业女声，适合医疗咨询'
+      },
+      {
+        id: 'zh_male_jingqiang_moon_bigtts', 
+        name: '京腔-月',
+        gender: 'male',
+        language: 'zh-CN',
+        description: '专业男声，磁性温和'
+      },
+      {
+        id: 'zh_female_wennuan_moon_bigtts',
+        name: '温暖-月',
+        gender: 'female', 
+        language: 'zh-CN',
+        description: '温暖女声，亲切友好'
+      }
+    ];
+  }
+
+# 4. 文本分段处理
+  splitText(text, maxLength) {
+    if (text.length <= maxLength) {
+      return [text];
+    }
+
+    const chunks = [];
+    let current = '';
+    const sentences = text.split(/[。！？；\n]/);
+
+    for (const sentence of sentences) {
+      if ((current + sentence).length <= maxLength) {
+        current += sentence + '。';
+      } else {
+        if (current) chunks.push(current.trim());
+        current = sentence + '。';
+      }
+    }
+
+    if (current) chunks.push(current.trim());
+    return chunks.filter(chunk => chunk.length > 0);
+  }
+
+# 5. 辅助工具方法
+  generateToken() {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signString = `${this.config.accessKey}${timestamp}`;
+    return crypto.createHmac('sha256', this.config.secretKey)
+                 .update(signString).digest('hex');
+  }
+  
+  generateReqId() {
+    return crypto.randomBytes(16).toString('hex');
+  }
+  
+  calculateDuration(text) {
+    // 估算语音时长（中文约2.5字/秒）
+    return Math.ceil(text.length / 2.5);
+  }
+  
+  async validateConfig() {
+    return !!(this.config.accessKey && this.config.secretKey && this.config.appId);
+  }
+  
+  async healthCheck() {
+    try {
+      const result = await this.textToSpeech('测试', { userId: 'health_check' });
+      return {
+        status: 'healthy',
+        provider: 'Volcengine TTS',
+        audioSize: result.audioBuffer.length
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        provider: 'Volcengine TTS',
+        error: error.message
+      };
+    }
+  }
+}
+
+module.exports = VolcengineTTSProvider;
+```
+
+**关键技术点**:
+1. **流式合成**: 长文本自动分段，逐段生成音频
+2. **音色选择**: 提供专业医疗咨询适用的音色选项
+3. **智能分段**: 按句号等自然停顿点分割文本
+4. **音频合并**: 多段音频无缝拼接
+5. **性能优化**: 支持并发生成和流式返回
+6. **错误处理**: 完整的API错误和网络错误处理
+
+**测试验证**:
+```bash
+# 单元测试
+npm test -- volcengine-tts.test.js
+
+# 测试流式合成功能
+# 验证音色效果
+# 测试长文本分段处理
+```
+
+**用户验证点**: 
+- [ ] 确认：TTS API连接成功
+- [ ] 确认：音频质量满足要求
+- [ ] 确认：流式合成功能正常
+- [ ] 确认：多种音色可选择
+
+#### Task 2.5: 集成测试和切换机制
+**目标**: 确保两套服务可以无缝切换
+**输入**: 所有Provider实现
+**输出**: 测试用例和切换脚本
+
+**具体步骤**:
+```bash
+# 1. 创建测试套件
+# 文件: backend/tests/providers.test.js
+# - 测试Azure Provider功能
+# - 测试Volcengine Provider功能  
+# - 测试服务切换逻辑
+# - 性能对比测试
+
+# 2. 创建切换脚本
+# 文件: backend/scripts/switch-provider.js
+# - 读取当前配置
+# - 验证目标Provider配置
+# - 更新环境变量
+# - 重启服务
+
+# 3. 创建健康检查
+# 文件: backend/src/utils/healthCheck.js
+# - 检查Provider连接状态
+# - 验证API可用性
+# - 监控响应时间
+```
+
+### 第三阶段：火山引擎ECS部署方案（用户已准备）
+
+#### Task 3.1: 火山引擎ECS初始环境配置
+**目标**: 配置ECS服务器基础环境
+**前提**: 用户已创建ECS实例并获取登录信息
+**输出**: 可运行Node.js应用的服务器环境
+
+**用户需提供的信息**:
+```bash
+# 请提供以下信息：
+VOLCENGINE_ECS_IP=<您的ECS公网IP>
+VOLCENGINE_ECS_USER=<SSH用户名，通常是root>
+VOLCENGINE_ECS_PASSWORD=<SSH密码或私钥路径>
+```
+
+**具体步骤**:
+```bash
+# 1. SSH登录到ECS服务器
+ssh root@<ECS_IP>
+
+# 2. 更新系统包
+apt update && apt upgrade -y
+
+# 3. 安装Node.js 20.x
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+apt-get install -y nodejs
+
+# 4. 验证安装
+node --version  # 应该显示 v20.x.x
+npm --version   # 应该显示 10.x.x
+
+# 5. 安装PM2进程管理器
+npm install -g pm2
+
+# 6. 安装Git
+apt-get install -y git
+
+# 7. 创建应用目录
+mkdir -p /var/www/jianjunai
+cd /var/www/jianjunai
+
+# 8. 配置防火墙（开放必要端口）
+ufw allow 22    # SSH
+ufw allow 3000  # Node.js应用
+ufw allow 80    # HTTP（可选）
+ufw allow 443   # HTTPS（可选）
+ufw enable
+```
+
+**用户验证点**:
+- [ ] 确认：成功SSH登录到ECS
+- [ ] 确认：Node.js 20.x安装成功
+- [ ] 确认：PM2安装成功
+- [ ] 确认：防火墙规则配置正确
+
+**Commit节点**: 记录配置信息到项目文档
+
+#### Task 3.2: 部署代码到ECS
+**目标**: 将应用代码部署到ECS服务器
+**输入**: GitHub仓库
+**输出**: 运行中的应用
+
+**部署方式选择**:
+
+**选项A：直接克隆（简单快速）**:
+```bash
+# 在ECS上执行
+cd /var/www/jianjunai
+
+# 1. 克隆代码（使用HTTPS，避免SSH密钥配置）
+git clone https://github.com/<your-username>/JianjunAI.git .
+
+# 2. 安装依赖
+cd backend
+npm install --production
+
+# 3. 创建环境文件
+nano .env
+# 粘贴所有环境变量（包括火山引擎配置）
+
+# 4. 使用PM2启动应用
+pm2 start src/index.js --name jianjunai
+
+# 5. 保存PM2配置
+pm2 save
+pm2 startup  # 设置开机自启
+```
+
+**选项B：CI/CD自动部署（推荐）**:
+```yaml
+# .github/workflows/deploy-volcengine.yml
+name: Deploy to Volcengine ECS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy to ECS
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.VOLCENGINE_ECS_IP }}
+          username: ${{ secrets.VOLCENGINE_ECS_USER }}
+          key: ${{ secrets.VOLCENGINE_SSH_KEY }}
+          script: |
+            cd /var/www/jianjunai
+            git pull origin main
+            cd backend
+            npm install --production
+            pm2 restart jianjunai
+```
+
+**用户验证点**:
+- [ ] 确认：代码成功部署到ECS
+- [ ] 确认：应用在3000端口运行
+- [ ] 确认：可以通过 http://<ECS_IP>:3000 访问
+
+#### Task 3.3: 配置Nginx反向代理（可选但推荐）
+**目标**: 设置Nginx处理HTTPS和负载均衡
+**输出**: 通过域名访问的安全服务
+
+**具体步骤**:
+```bash
+# 1. 安装Nginx
+apt-get install -y nginx
+
+# 2. 创建Nginx配置
+nano /etc/nginx/sites-available/jianjunai
+
+# 配置内容：
+server {
+    listen 80;
+    server_name your-domain.com;  # 或使用IP
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+
+# 3. 启用配置
+ln -s /etc/nginx/sites-available/jianjunai /etc/nginx/sites-enabled/
+nginx -t  # 测试配置
+systemctl restart nginx
+
+# 4. （可选）配置SSL证书
+# 使用Let's Encrypt免费证书
+apt-get install -y certbot python3-certbot-nginx
+certbot --nginx -d your-domain.com
+```
+
+**用户验证点**:
+- [ ] 确认：Nginx配置正确
+- [ ] 确认：可以通过80端口访问
+- [ ] 确认：WebSocket连接正常工作
+
+**Commit节点**: ✅ `git commit -m "docs: add Volcengine ECS deployment configuration"`
+
+#### Task 3.4: 监控和日志配置
+**目标**: 设置应用监控和日志收集
+**输出**: 可监控的生产环境
+
+**具体步骤**:
+```bash
+# 1. 配置PM2日志
+pm2 install pm2-logrotate  # 自动轮转日志
+pm2 set pm2-logrotate:max_size 10M
+pm2 set pm2-logrotate:retain 7
+
+# 2. 查看日志
+pm2 logs jianjunai
+
+# 3. 监控命令
+pm2 monit  # 实时监控
+pm2 status  # 查看状态
+
+# 4. 设置告警（使用PM2 Plus或自定义脚本）
+# 创建健康检查脚本
+nano /var/www/jianjunai/health-check.sh
+#!/bin/bash
+curl -f http://localhost:3000/health || pm2 restart jianjunai
+
+# 5. 添加到crontab
+crontab -e
+*/5 * * * * /var/www/jianjunai/health-check.sh
+```
+
+**性能测试**:
+```bash
+# 本地测试火山引擎服务响应
+curl -X POST http://<ECS_IP>:3000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "测试消息"}'
+
+# 测试WebSocket连接
+wscat -c ws://<ECS_IP>:3000
+```
+
+**用户验证点**:
+- [ ] 确认：日志正常记录
+- [ ] 确认：监控系统工作
+- [ ] 确认：健康检查通过
+- [ ] 确认：性能符合预期
+
+**最终Commit**: ✅ `git commit -m "feat: complete Volcengine ECS deployment"`
+**优点**：
+- 完全控制服务器环境
+- 灵活的配置和扩展
+- 支持自定义部署脚本
+
+**部署步骤**：
+1. 创建火山引擎ECS实例（推荐配置：2核4G）
+2. 安装Node.js 20.x环境
+3. 配置PM2进程管理
+4. 设置Nginx反向代理
+5. 配置SSL证书
+6. 实现GitHub Actions自动部署
+
+#### 选项2：火山引擎容器服务（VKE）
+**优点**：
+- 容器化部署，易于管理
+- 自动扩缩容
+- 与现有Docker配置兼容
+
+**部署步骤**：
+1. 创建VKE集群
+2. 构建Docker镜像
+3. 推送到火山引擎镜像仓库
+4. 部署Kubernetes配置
+5. 设置负载均衡和自动扩展
+
+#### 选项3：火山引擎函数计算（推荐用于轻量级服务）
+**优点**：
+- 按需付费，成本优化
+- 自动扩展
+- 无需管理服务器
+
+**适用场景**：
+- 语音识别结果处理
+- 建议问题生成
+- 用户数据同步
+
+### 第四阶段：CI/CD配置
+
+#### GitHub Actions工作流配置
+```yaml
+name: Deploy to Volcengine
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+          
+      - name: Install dependencies
+        run: |
+          cd backend
+          npm ci
+          
+      - name: Run tests
+        run: |
+          cd backend
+          npm test
+          
+      - name: Deploy to Volcengine ECS
+        env:
+          VOLCENGINE_HOST: ${{ secrets.VOLCENGINE_HOST }}
+          VOLCENGINE_USER: ${{ secrets.VOLCENGINE_USER }}
+          VOLCENGINE_SSH_KEY: ${{ secrets.VOLCENGINE_SSH_KEY }}
+        run: |
+          # SSH部署脚本
+          echo "$VOLCENGINE_SSH_KEY" > deploy_key
+          chmod 600 deploy_key
+          ssh -i deploy_key -o StrictHostKeyChecking=no $VOLCENGINE_USER@$VOLCENGINE_HOST '
+            cd /var/www/jianjunai
+            git pull origin main
+            npm install --production
+            pm2 restart jianjunai
+          '
+```
+
+## 需要手动完成的任务
+
+### 1. 火山引擎账号配置（必须）
+- [ ] 注册火山引擎账号
+- [ ] 开通以下服务：
+  - [ ] 智能语音交互（ASR/TTS）
+  - [ ] 大模型服务（LLM）
+  - [ ] 云服务器（ECS）或容器服务（VKE）
+- [ ] 创建访问密钥（Access Key/Secret Key）
+- [ ] 获取各服务的AppId和AppKey
+
+### 2. 服务配置（必须）
+- [ ] 在火山引擎控制台配置ASR服务
+  - 选择语音识别模型（推荐：大模型流式识别）
+  - 配置语言（中文）
+  - 获取WebSocket连接端点
+- [ ] 配置TTS服务
+  - 选择音色（推荐：专业女声）
+  - 设置语速和音调参数
+- [ ] 配置LLM服务
+  - 选择模型版本
+  - 设置token限制和温度参数
+
+### 3. 部署环境准备（必须）
+- [ ] 创建火山引擎ECS实例或VKE集群
+- [ ] 配置安全组规则（开放3000端口）
+- [ ] 绑定弹性公网IP
+- [ ] 配置域名解析（可选）
+- [ ] 申请SSL证书（如需HTTPS）
+
+### 4. GitHub配置（必须）
+- [ ] 在GitHub仓库设置Secrets：
+  - `VOLCENGINE_ACCESS_KEY`
+  - `VOLCENGINE_SECRET_KEY`
+  - `VOLCENGINE_HOST`（ECS公网IP）
+  - `VOLCENGINE_USER`（SSH用户名）
+  - `VOLCENGINE_SSH_KEY`（SSH私钥）
+
+### 5. 初始部署（必须）
+- [ ] SSH登录到ECS服务器
+- [ ] 安装必要软件：
+  ```bash
+  # 安装Node.js 20
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+  
+  # 安装PM2
+  npm install -g pm2
+  
+  # 安装Nginx（可选）
+  sudo apt-get install nginx
+  ```
+- [ ] 克隆代码仓库
+- [ ] 配置环境变量文件
+- [ ] 首次启动服务
+
+### 6. 监控和日志（推荐）
+- [ ] 配置火山引擎云监控
+- [ ] 设置告警规则
+- [ ] 配置日志收集
+- [ ] 设置性能监控指标
+
+## 测试计划
+
+### 1. 单元测试
+- 测试各Provider的基本功能
+- 验证服务切换逻辑
+- 错误处理测试
+
+### 2. 集成测试
+- Azure服务完整流程测试
+- 火山引擎服务完整流程测试
+- 服务切换测试
+- 并发请求测试
+
+### 3. 性能测试
+- 响应时间对比
+- 并发处理能力
+- 资源使用情况
+- 成本分析
+
+## 预期成本
+
+### 火山引擎服务费用（月度预估）
+- **ECS服务器**：2核4G约 ¥200/月
+- **ASR服务**：按使用量计费，约 ¥0.01/秒
+- **TTS服务**：按字符数计费，约 ¥0.5/千字符
+- **LLM服务**：按token计费，约 ¥0.1/千tokens
+- **带宽费用**：按流量计费，约 ¥0.8/GB
+
+### 对比Azure（现有方案）
+- 火山引擎在国内访问延迟更低
+- ASR/TTS服务价格相对Azure更有优势
+- LLM服务价格与Azure相当
+
+## 风险和缓解措施
+
+### 1. 技术风险
+- **风险**：火山引擎SDK稳定性
+- **缓解**：实现重试机制和降级策略
+
+### 2. 性能风险
+- **风险**：服务响应延迟
+- **缓解**：实现缓存机制和预热策略
+
+### 3. 成本风险
+- **风险**：使用量超出预算
+- **缓解**：设置使用量告警和限额
+
+## 时间线
+
+- **第1-2周**：完成服务抽象层和Azure重构
+- **第3周**：完成火山引擎服务集成
+- **第4周**：部署配置和测试
+- **第5周**：性能优化和文档完善
+
+## 后续优化建议
+
+1. **多区域部署**：在多个地区部署服务，提高可用性
+2. **智能路由**：根据用户位置自动选择最近的服务
+3. **混合使用**：某些功能使用Azure，某些使用火山引擎
+4. **成本优化**：根据使用情况动态调整服务配置
+5. **缓存策略**：对常见问题实现响应缓存
+
+## 总结
+
+通过实施本方案，应用将具备：
+- 多云服务支持，提高系统可靠性
+- 灵活的服务切换能力
+- 更低的国内访问延迟
+- 成本优化的可能性
+- 更好的扩展性和维护性
+
+整个实施过程预计需要4-5周时间，其中大部分开发工作可以自动化完成，但需要手动完成火山引擎账号配置、服务开通和初始部署等关键步骤。
+
+---
+
+# AI回复自动朗读功能实施方案
+
+## 目标
+为AI回复内容添加TTS功能，实现自动朗读和交互式语音播放控制，提升用户体验。
+
+## 功能需求
+
+### 1. 自动朗读
+- AI回复完成后自动开始朗读
+- 支持点击回复文本框取消朗读
+
+### 2. 朗读控制按钮
+在AI回复文本框底部添加交互按钮：
+- **复制按钮**：复制回复内容到剪贴板
+- **朗读控制按钮**：
+  - 朗读中：显示动态声波效果
+  - 未朗读/朗读完成：显示小喇叭图标
+  - 点击重新朗读
+
+## 实施方案（PRP格式）
+
+### Phase 1: 后端TTS接口优化
+
+#### Task 1.1: 创建TTS流式接口
+**目标**: 为前端提供TTS流式音频接口
+**责任人**: 开发者
+**输入**: AI回复文本内容
+**输出**: 流式音频数据接口
+
+**具体步骤**:
+```javascript
+// 文件: backend/src/controllers/ttsController.js
+const ProviderFactory = require('../services/ProviderFactory');
+const ConfigService = require('../services/ConfigService');
+
+// 新增TTS流式接口
+exports.textToSpeechStream = async (req, res) => {
+  try {
+    const { text, voice, userId } = req.body;
+    
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({ error: '文本内容不能为空' });
+    }
+
+    const ttsProvider = ProviderFactory.getTTSProvider();
+    await ttsProvider.initialize();
+
+    // 获取默认音色（基于当前Provider）
+    const providerType = ConfigService.getProviderType();
+    const defaultVoice = providerType === 'azure' 
+      ? 'zh-CN-XiaoxiaoNeural' 
+      : 'ICL_zh_male_lengjungaozhi_tob';
+
+    // 动态设置响应头（根据Provider支持的格式）
+    const supportedFormats = ttsProvider.getSupportedFormats();
+    const audioFormat = supportedFormats.includes('mp3') ? 'mp3' : 'wav';
+    const contentType = audioFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Transfer-Encoding', 'chunked');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Audio-Format', audioFormat); // 告知前端音频格式
+    
+    // 流式TTS合成
+    await ttsProvider.streamTextToSpeech(text, {
+      voiceType: voice || defaultVoice,
+      userId: userId || 'web_user',
+      encoding: audioFormat,
+      onChunk: (chunk) => {
+        // 将音频数据块写入响应流
+        res.write(chunk.audioBuffer);
+      }
+    });
+    
+    res.end();
+    
+  } catch (error) {
+    console.error('TTS流式合成错误:', error);
+    res.status(500).json({ error: 'TTS服务异常' });
   }
 };
 
-// 创建 multer 实例
-const upload = multer({
-  storage: storage,
-  fileFilter: fileFilter,
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 限制 10MB
-    files: 1
-  }
-});
-
-module.exports = upload;
-```
-
-##### 4.2 语音识别服务 (`src/services/speechService.js`)
-
-```javascript
-const sdk = require('microsoft-cognitiveservices-speech-sdk');
-const fs = require('fs').promises;
-const path = require('path');
-
-class SpeechService {
-  constructor() {
-    this.speechKey = process.env.AZURE_SPEECH_KEY;
-    this.speechRegion = process.env.AZURE_SPEECH_REGION || 'eastasia';
-    this.language = process.env.AZURE_SPEECH_LANGUAGE || 'zh-CN';
-    
-    if (!this.speechKey) {
-      console.error('警告: AZURE_SPEECH_KEY 未配置');
-    }
-  }
-
-  /**
-   * 将音频文件转换为文本
-   * @param {string} audioFilePath - 音频文件路径
-   * @returns {Promise<{success: boolean, text: string, confidence: number, duration: number}>}
-   */
-  async speechToText(audioFilePath) {
-    try {
-      // 检查文件是否存在
-      await fs.access(audioFilePath);
-      
-      // 配置语音识别
-      const speechConfig = sdk.SpeechConfig.fromSubscription(
-        this.speechKey,
-        this.speechRegion
-      );
-      speechConfig.speechRecognitionLanguage = this.language;
-      
-      // 设置识别参数以提高准确性
-      speechConfig.setProperty(
-        sdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs,
-        "5000"
-      );
-      speechConfig.setProperty(
-        sdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs,
-        "1000"
-      );
-      
-      // 从文件创建音频配置
-      const audioConfig = sdk.AudioConfig.fromWavFileInput(
-        await fs.readFile(audioFilePath)
-      );
-      
-      // 创建识别器
-      const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-      
-      // 返回 Promise 包装的识别结果
-      return new Promise((resolve, reject) => {
-        let startTime = Date.now();
-        
-        recognizer.recognizeOnceAsync(
-          (result) => {
-            const duration = (Date.now() - startTime) / 1000;
-            
-            if (result.reason === sdk.ResultReason.RecognizedSpeech) {
-              // 计算置信度（基于识别结果的属性）
-              const confidence = this.calculateConfidence(result);
-              
-              resolve({
-                success: true,
-                text: result.text,
-                confidence: confidence,
-                duration: duration,
-                language: this.language
-              });
-            } else if (result.reason === sdk.ResultReason.NoMatch) {
-              resolve({
-                success: false,
-                text: '',
-                confidence: 0,
-                duration: duration,
-                error: '无法识别语音内容'
-              });
-            } else {
-              reject(new Error('语音识别被取消或出错'));
-            }
-            
-            recognizer.close();
-          },
-          (error) => {
-            recognizer.close();
-            reject(error);
-          }
-        );
-      });
-    } catch (error) {
-      console.error('语音识别错误:', error);
-      throw error;
-    } finally {
-      // 清理临时文件
-      try {
-        await fs.unlink(audioFilePath);
-      } catch (err) {
-        console.error('清理临时文件失败:', err);
-      }
-    }
-  }
-
-  /**
-   * 计算识别置信度
-   * @private
-   */
-  calculateConfidence(result) {
-    // Azure 不直接提供置信度分数，我们基于一些因素估算
-    let confidence = 0.7; // 基础置信度
-    
-    // 根据识别文本长度调整
-    if (result.text.length > 10) confidence += 0.1;
-    if (result.text.length > 20) confidence += 0.1;
-    
-    // 检查是否包含标点符号（通常表示更完整的识别）
-    if (/[，。！？]/.test(result.text)) confidence += 0.05;
-    
-    return Math.min(confidence, 0.95);
-  }
-
-  /**
-   * 验证语音时长
-   * @param {string} audioFilePath - 音频文件路径
-   * @returns {Promise<number>} 音频时长（秒）
-   */
-  async getAudioDuration(audioFilePath) {
-    // 简单实现：基于文件大小估算
-    // 实际项目中应使用专门的音频处理库
-    const stats = await fs.stat(audioFilePath);
-    const fileSizeInBytes = stats.size;
-    const bitRate = 48000; // 48kbps
-    const duration = (fileSizeInBytes * 8) / bitRate;
-    return duration;
-  }
-}
-
-module.exports = new SpeechService();
-```
-
-##### 4.3 语音控制器 (`src/controllers/speechController.js`)
-
-```javascript
-const speechService = require('../services/speechService');
-const userDataService = require('../services/userDataService');
-
-class SpeechController {
-  /**
-   * 处理语音转文字请求
-   */
-  async speechToText(req, res) {
-    try {
-      // 验证请求
-      if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          error: '未接收到音频文件'
-        });
-      }
-
-      const { userId } = req.body;
-      if (!userId) {
-        return res.status(400).json({
-          success: false,
-          error: '缺少用户ID'
-        });
-      }
-
-      console.log(`[STT] 用户 ${userId} 上传音频文件: ${req.file.filename}`);
-
-      // 获取音频时长
-      const duration = await speechService.getAudioDuration(req.file.path);
-      
-      // 验证音频时长（1-60秒）
-      if (duration < 1) {
-        return res.status(400).json({
-          success: false,
-          error: '录音时间太短，请至少录制1秒'
-        });
-      }
-      
-      if (duration > 60) {
-        return res.status(400).json({
-          success: false,
-          error: '录音时间太长，请不要超过60秒'
-        });
-      }
-
-      // 执行语音识别
-      const result = await speechService.speechToText(req.file.path);
-      
-      // 记录用户语音使用情况（可选）
-      const userData = await userDataService.getUserData(userId);
-      if (userData) {
-        userData.voiceUsageCount = (userData.voiceUsageCount || 0) + 1;
-        userData.lastVoiceUse = new Date().toISOString();
-        await userDataService.saveUserData(userId, userData);
-      }
-
-      // 返回识别结果
-      res.json({
-        success: result.success,
-        text: result.text || '',
-        confidence: result.confidence || 0,
-        duration: duration,
-        language: result.language,
-        error: result.error
-      });
-
-    } catch (error) {
-      console.error('[STT] 语音识别错误:', error);
-      
-      // 根据错误类型返回适当的错误信息
-      let errorMessage = '语音识别失败';
-      let statusCode = 500;
-      
-      if (error.message.includes('AZURE_SPEECH_KEY')) {
-        errorMessage = '语音服务未配置';
-        statusCode = 503;
-      } else if (error.message.includes('网络')) {
-        errorMessage = '网络连接错误';
-        statusCode = 503;
-      } else if (error.message.includes('文件')) {
-        errorMessage = '音频文件处理失败';
-        statusCode = 400;
-      }
-      
-      res.status(statusCode).json({
-        success: false,
-        error: errorMessage,
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
-      });
-    }
-  }
-
-  /**
-   * 获取语音服务状态
-   */
-  async getServiceStatus(req, res) {
-    const isConfigured = !!process.env.AZURE_SPEECH_KEY;
+// 获取当前Provider支持的音色列表
+exports.getSupportedVoices = async (req, res) => {
+  try {
+    const ttsProvider = ProviderFactory.getTTSProvider();
+    const voices = ttsProvider.getSupportedVoices();
+    const providerType = ConfigService.getProviderType();
     
     res.json({
-      available: isConfigured,
-      language: process.env.AZURE_SPEECH_LANGUAGE || 'zh-CN',
-      region: process.env.AZURE_SPEECH_REGION || 'eastasia',
-      maxDuration: 60,
-      minDuration: 1,
-      supportedFormats: ['mp3', 'wav', 'm4a', 'webm']
+      provider: providerType,
+      voices: voices,
+      defaultVoice: voices[0]?.id
     });
+  } catch (error) {
+    console.error('获取音色列表失败:', error);
+    res.status(500).json({ error: '获取音色列表失败' });
   }
-}
-
-module.exports = new SpeechController();
+};
 ```
 
-##### 4.4 语音路由 (`src/routes/speechRoutes.js`)
-
+**路由配置**:
 ```javascript
-const express = require('express');
-const router = express.Router();
-const speechController = require('../controllers/speechController');
-const upload = require('../middleware/upload');
-const { authenticateToken } = require('../middleware/auth');
-
-// 语音转文字接口
-router.post(
-  '/speech-to-text',
-  authenticateToken, // JWT 验证
-  upload.single('audio'), // 处理单个音频文件上传
-  speechController.speechToText
-);
-
-// 获取语音服务状态
-router.get(
-  '/speech/status',
-  authenticateToken,
-  speechController.getServiceStatus
-);
-
-module.exports = router;
+// 文件: backend/src/routes/speech.js
+router.post('/tts/stream', ttsController.textToSpeechStream);
+router.get('/tts/voices', ttsController.getSupportedVoices);
 ```
 
-##### 4.5 主文件更新 (`src/index.js`)
+**验证点**:
+- [ ] TTS流式接口正常工作
+- [ ] 音频数据正确返回
+- [ ] 错误处理完善
 
-在主文件中注册新的路由：
+#### Task 1.2: 优化TTS缓存机制  
+**目标**: 实现TTS结果缓存，提高性能
+**输入**: 文本内容和音色配置
+**输出**: 缓存的音频文件
 
+**具体步骤**:
 ```javascript
-// 在现有的导入后添加
-const speechRoutes = require('./routes/speechRoutes');
-
-// 在现有的路由注册后添加
-app.use('/api', speechRoutes);
-
-// 清理临时文件（可选）
-const cleanupTempFiles = require('./utils/cleanup');
-setInterval(() => {
-  cleanupTempFiles.cleanOldFiles('./temp', 60 * 60 * 1000); // 清理1小时前的文件
-}, 30 * 60 * 1000); // 每30分钟执行一次
-```
-
-#### 5. 错误处理与优化
-
-##### 5.1 临时文件清理工具 (`src/utils/cleanup.js`)
-
-```javascript
+// 文件: backend/src/services/TTSCacheService.js
+const crypto = require('crypto');
 const fs = require('fs').promises;
 const path = require('path');
 
-class CleanupUtil {
-  /**
-   * 清理指定目录中的旧文件
-   * @param {string} directory - 目录路径
-   * @param {number} maxAge - 最大文件年龄（毫秒）
-   */
-  async cleanOldFiles(directory, maxAge) {
+class TTSCacheService {
+  constructor() {
+    this.cacheDir = path.join(__dirname, '../../cache/tts');
+    this.maxCacheSize = 100 * 1024 * 1024; // 100MB
+    this.maxCacheAge = 24 * 60 * 60 * 1000; // 24小时
+  }
+
+  async init() {
+    await fs.mkdir(this.cacheDir, { recursive: true });
+  }
+
+  generateCacheKey(text, voice, options = {}) {
+    const content = `${text}|${voice}|${JSON.stringify(options)}`;
+    return crypto.createHash('md5').update(content).digest('hex');
+  }
+
+  async get(cacheKey) {
     try {
-      const files = await fs.readdir(directory);
-      const now = Date.now();
+      const filePath = path.join(this.cacheDir, `${cacheKey}.wav`);
+      const stats = await fs.stat(filePath);
       
-      for (const file of files) {
-        const filePath = path.join(directory, file);
-        const stats = await fs.stat(filePath);
-        
-        if (now - stats.mtimeMs > maxAge) {
-          await fs.unlink(filePath);
-          console.log(`[Cleanup] 删除过期文件: ${file}`);
-        }
+      // 检查文件是否过期
+      if (Date.now() - stats.mtime.getTime() > this.maxCacheAge) {
+        await fs.unlink(filePath);
+        return null;
       }
+      
+      return await fs.readFile(filePath);
     } catch (error) {
-      console.error('[Cleanup] 清理失败:', error);
+      return null;
     }
+  }
+
+  async set(cacheKey, audioBuffer) {
+    try {
+      const filePath = path.join(this.cacheDir, `${cacheKey}.wav`);
+      await fs.writeFile(filePath, audioBuffer);
+      await this.cleanupOldFiles();
+    } catch (error) {
+      console.error('TTS缓存写入失败:', error);
+    }
+  }
+
+  async cleanupOldFiles() {
+    // 定期清理过期文件
+    // 实现LRU缓存清理策略
   }
 }
 
-module.exports = new CleanupUtil();
+module.exports = new TTSCacheService();
 ```
 
-##### 5.2 速率限制
+**验证点**:
+- [ ] 缓存机制正常工作
+- [ ] 相同文本快速返回缓存结果
+- [ ] 缓存大小和过期时间控制正确
 
-在 `src/middleware/security.js` 中添加语音接口的速率限制：
+### Phase 2: 前端朗读功能实现
 
+#### Task 2.1: 实现音频播放管理器
+**目标**: 创建音频播放控制模块
+**输入**: TTS音频流数据
+**输出**: 音频播放控制器
+
+**具体步骤**:
 ```javascript
-// 语音接口速率限制
-const speechLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1分钟
-  max: 10, // 每分钟最多10次语音识别请求
-  message: '语音识别请求过于频繁，请稍后再试',
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+// 文件: frontend/utils/audioManager.js
+class AudioManager {
+  constructor() {
+    this.currentAudio = null;
+    this.isPlaying = false;
+    this.audioContext = null;
+    this.sourceNode = null;
+  }
 
-// 导出供路由使用
-module.exports.speechLimiter = speechLimiter;
+  async init() {
+    // 初始化Web Audio API
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+  }
+
+  async playTTSStream(text, options = {}) {
+    try {
+      // 停止当前播放
+      this.stop();
+      
+      const response = await wx.request({
+        url: 'http://localhost:3000/api/speech/tts/stream',
+        method: 'POST',
+        data: {
+          text: text,
+          voice: options.voice, // 让后端根据Provider选择默认音色
+          userId: options.userId || 'miniprogram_user'
+        },
+        responseType: 'arraybuffer'
+      });
+
+      if (response.statusCode === 200) {
+        const audioBuffer = response.data;
+        // 检查音频格式（通过响应头）
+        const audioFormat = response.header['X-Audio-Format'] || 'wav';
+        
+        await this.playAudioBuffer(audioBuffer, audioFormat);
+        return true;
+      }
+      
+      throw new Error(`TTS请求失败: ${response.statusCode}`);
+      
+    } catch (error) {
+      console.error('TTS播放失败:', error);
+      wx.showToast({
+        title: '语音播放失败',
+        icon: 'none'
+      });
+      return false;
+    }
+  }
+
+  async playAudioBuffer(arrayBuffer, format = 'wav') {
+    // 在微信小程序中，使用 wx.createInnerAudioContext
+    // 因为小程序不支持Web Audio API
+    return new Promise((resolve, reject) => {
+      try {
+        // 将ArrayBuffer转为临时文件
+        const tempFilePath = wx.env.USER_DATA_PATH + '/temp_audio.' + format;
+        
+        wx.getFileSystemManager().writeFile({
+          filePath: tempFilePath,
+          data: arrayBuffer,
+          success: () => {
+            // 创建音频上下文
+            const audioContext = wx.createInnerAudioContext();
+            audioContext.src = tempFilePath;
+            
+            audioContext.onPlay(() => {
+              this.isPlaying = true;
+            });
+            
+            audioContext.onEnded(() => {
+              this.isPlaying = false;
+              audioContext.destroy();
+              // 清理临时文件
+              wx.getFileSystemManager().unlink({
+                filePath: tempFilePath,
+                complete: () => {}
+              });
+              resolve();
+            });
+            
+            audioContext.onError((error) => {
+              this.isPlaying = false;
+              audioContext.destroy();
+              reject(error);
+            });
+            
+            audioContext.play();
+            this.currentAudio = audioContext;
+          },
+          fail: reject
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  stop() {
+    if (this.currentAudio) {
+      this.currentAudio.stop();
+      this.currentAudio.destroy();
+      this.currentAudio = null;
+    }
+    this.isPlaying = false;
+  }
+
+  getPlayingStatus() {
+    return this.isPlaying;
+  }
+}
+
+export default new AudioManager();
 ```
 
-#### 6. 部署注意事项
+**验证点**:
+- [ ] 音频播放功能正常
+- [ ] 播放状态管理正确
+- [ ] 停止播放功能正常
 
-##### 6.1 Azure App Service 配置
+#### Task 2.2: 实现AI回复朗读控制组件
+**目标**: 为AI消息添加朗读控制UI
+**输入**: AI回复消息数据
+**输出**: 带朗读控制的消息组件
 
-在 Azure Portal 中添加应用设置：
-- `AZURE_SPEECH_KEY`: Speech Service 密钥
-- `AZURE_SPEECH_REGION`: 服务区域
-- `AZURE_SPEECH_LANGUAGE`: 识别语言
-
-##### 6.2 文件大小限制
-
-确保 Azure App Service 的请求大小限制足够：
-```xml
-<!-- web.config -->
-<system.webServer>
-  <security>
-    <requestFiltering>
-      <requestLimits maxAllowedContentLength="10485760" />
-    </requestFiltering>
-  </security>
-</system.webServer>
-```
-
-##### 6.3 临时文件目录权限
-
-确保应用有权限写入临时目录：
-```javascript
-// 使用 Azure 的临时目录
-const tempDir = process.env.TEMP || path.join(__dirname, '../../temp');
-```
-
-#### 7. 测试方案
-
-##### 7.1 单元测试示例
-
-```javascript
-// test/speech.test.js
-const request = require('supertest');
-const app = require('../src/index');
-const path = require('path');
-
-describe('Speech API', () => {
-  it('should convert speech to text', async () => {
-    const response = await request(app)
-      .post('/api/speech-to-text')
-      .set('Authorization', 'Bearer ' + validToken)
-      .field('userId', 'test_user')
-      .attach('audio', path.join(__dirname, 'fixtures/test-audio.mp3'));
-    
-    expect(response.status).toBe(200);
-    expect(response.body.success).toBe(true);
-    expect(response.body.text).toBeTruthy();
-  });
+**具体步骤**:
+```html
+<!-- 文件: frontend/pages/index/index.wxml -->
+<!-- AI消息模板修改 -->
+<view class="message ai-message" wx:if="{{message.role === 'assistant'}}">
+  <view class="message-content" bindtap="toggleTTS" data-message-id="{{message.id}}">
+    <text>{{message.content}}</text>
+  </view>
   
-  it('should reject files that are too short', async () => {
-    const response = await request(app)
-      .post('/api/speech-to-text')
-      .set('Authorization', 'Bearer ' + validToken)
-      .field('userId', 'test_user')
-      .attach('audio', path.join(__dirname, 'fixtures/short-audio.mp3'));
+  <!-- 朗读控制按钮组 -->
+  <view class="message-controls">
+    <!-- 复制按钮 -->
+    <view class="control-btn copy-btn" bindtap="copyMessage" data-content="{{message.content}}">
+      <image src="/images/copy-icon.png" class="control-icon"></image>
+    </view>
     
-    expect(response.status).toBe(400);
-    expect(response.body.error).toContain('太短');
-  });
-});
+    <!-- 朗读控制按钮 -->
+    <view class="control-btn tts-btn" bindtap="toggleTTS" data-message-id="{{message.id}}">
+      <!-- 朗读中：显示动态声波 -->
+      <view wx:if="{{message.isPlaying}}" class="sound-wave">
+        <view class="wave-bar bar1"></view>
+        <view class="wave-bar bar2"></view>
+        <view class="wave-bar bar3"></view>
+        <view class="wave-bar bar4"></view>
+      </view>
+      <!-- 未播放：显示喇叭图标 -->
+      <image wx:else src="/images/speaker-icon.png" class="control-icon"></image>
+    </view>
+  </view>
+</view>
 ```
 
-##### 7.2 压力测试
+**样式文件**:
+```css
+/* 文件: frontend/pages/index/index.wxss */
+.message-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 0 8px;
+}
 
-```bash
-# 使用 Apache Bench 进行压力测试
-ab -n 100 -c 10 -T "multipart/form-data" \
-   -H "Authorization: Bearer TOKEN" \
-   http://localhost:3000/api/speech-to-text
+.control-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 16px;
+  transition: background 0.2s;
+}
+
+.control-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.control-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* 动态声波效果 */
+.sound-wave {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+}
+
+.wave-bar {
+  width: 2px;
+  background: #1890ff;
+  animation: wave 1s infinite ease-in-out;
+}
+
+.bar1 { animation-delay: 0s; }
+.bar2 { animation-delay: 0.1s; }
+.bar3 { animation-delay: 0.2s; }
+.bar4 { animation-delay: 0.3s; }
+
+@keyframes wave {
+  0%, 40%, 100% {
+    height: 4px;
+    opacity: 0.5;
+  }
+  20% {
+    height: 16px;
+    opacity: 1;
+  }
+}
 ```
 
-#### 8. 监控与日志
-
-##### 8.1 添加详细日志
-
+**JavaScript逻辑**:
 ```javascript
-// 在 speechController.js 中
-console.log(`[STT] 请求详情:`, {
-  userId,
-  fileName: req.file.filename,
-  fileSize: req.file.size,
-  mimeType: req.file.mimetype,
-  timestamp: new Date().toISOString()
-});
+// 文件: frontend/pages/index/index.js
+import AudioManager from '../../utils/audioManager.js';
 
-// 记录识别结果
-console.log(`[STT] 识别结果:`, {
-  userId,
-  textLength: result.text.length,
-  confidence: result.confidence,
-  duration: duration,
-  success: result.success
+Page({
+  data: {
+    messages: [],
+    // ... 其他数据
+  },
+
+  // 复制消息内容
+  copyMessage(e) {
+    const content = e.currentTarget.dataset.content;
+    wx.setClipboardData({
+      data: content,
+      success: () => {
+        wx.showToast({
+          title: '已复制到剪贴板',
+          icon: 'success'
+        });
+      }
+    });
+  },
+
+  // 切换TTS播放状态
+  async toggleTTS(e) {
+    const messageId = e.currentTarget.dataset.messageId;
+    const message = this.data.messages.find(msg => msg.id === messageId);
+    
+    if (!message) return;
+
+    if (message.isPlaying) {
+      // 停止播放
+      AudioManager.stop();
+      this.updateMessagePlayingStatus(messageId, false);
+    } else {
+      // 开始播放
+      this.updateMessagePlayingStatus(messageId, true);
+      
+      const success = await AudioManager.playTTSStream(message.content, {
+        userId: this.data.userInfo.userId
+      });
+      
+      if (success) {
+        // 播放完成后更新状态
+        setTimeout(() => {
+          this.updateMessagePlayingStatus(messageId, false);
+        }, this.estimatePlayDuration(message.content));
+      } else {
+        this.updateMessagePlayingStatus(messageId, false);
+      }
+    }
+  },
+
+  // 更新消息播放状态
+  updateMessagePlayingStatus(messageId, isPlaying) {
+    const messages = this.data.messages.map(msg => {
+      if (msg.id === messageId) {
+        return { ...msg, isPlaying };
+      }
+      // 停止其他消息的播放状态
+      return { ...msg, isPlaying: false };
+    });
+    
+    this.setData({ messages });
+  },
+
+  // 估算播放时长（中文约2.5字/秒）
+  estimatePlayDuration(text) {
+    return Math.ceil(text.length / 2.5) * 1000;
+  },
+
+  // AI回复完成后自动开始朗读
+  onAIResponseComplete(message) {
+    // 添加消息到列表
+    const messageWithId = {
+      ...message,
+      id: Date.now().toString(),
+      isPlaying: false
+    };
+    
+    this.data.messages.push(messageWithId);
+    this.setData({ messages: this.data.messages });
+
+    // 自动开始朗读（可通过设置控制）
+    if (this.data.autoTTS) {
+      setTimeout(() => {
+        this.toggleTTS({
+          currentTarget: { dataset: { messageId: messageWithId.id } }
+        });
+      }, 500); // 延迟500ms开始朗读
+    }
+  },
+
+  // 点击消息文本取消朗读
+  onMessageTap(e) {
+    const messageId = e.currentTarget.dataset.messageId;
+    const message = this.data.messages.find(msg => msg.id === messageId);
+    
+    if (message && message.isPlaying) {
+      AudioManager.stop();
+      this.updateMessagePlayingStatus(messageId, false);
+    }
+  }
 });
 ```
 
-##### 8.2 性能监控
+**验证点**:
+- [ ] 朗读控制按钮正常显示
+- [ ] 动态声波效果正确
+- [ ] 复制功能正常工作
+- [ ] 点击文本可取消朗读
 
+#### Task 2.3: 添加TTS设置选项
+**目标**: 提供TTS个性化设置
+**输入**: 用户设置偏好
+**输出**: TTS配置界面
+
+**具体步骤**:
+```html
+<!-- 文件: frontend/pages/settings/settings.wxml -->
+<view class="settings-section">
+  <view class="section-title">语音设置</view>
+  
+  <!-- 当前Provider信息 -->
+  <view class="setting-item info-item">
+    <view class="setting-label">当前语音服务</view>
+    <view class="setting-value">{{currentProvider || '加载中...'}}</view>
+  </view>
+  
+  <view class="setting-item">
+    <view class="setting-label">自动朗读AI回复</view>
+    <switch checked="{{autoTTS}}" bindchange="toggleAutoTTS" />
+  </view>
+  
+  <view class="setting-item">
+    <view class="setting-label">语音音色</view>
+    <picker wx:if="{{!loading && voiceOptions.length > 0}}" 
+           range="{{voiceOptions}}" 
+           range-key="name" 
+           value="{{selectedVoiceIndex}}" 
+           bindchange="changeVoice">
+      <view class="picker-display">
+        {{voiceOptions[selectedVoiceIndex].name}}
+        <view class="picker-desc">{{voiceOptions[selectedVoiceIndex].description}}</view>
+      </view>
+    </picker>
+    <view wx:else class="picker-loading">加载中...</view>
+  </view>
+  
+  <view class="setting-item">
+    <view class="setting-label">语音语速</view>
+    <slider min="0.5" max="2.0" step="0.1" value="{{speechRate}}" bindchange="changeSpeechRate" show-value />
+  </view>
+  
+  <!-- 音色测试按钮 -->
+  <view class="setting-item">
+    <button class="test-voice-btn" 
+            bindtap="testCurrentVoice" 
+            disabled="{{loading}}">
+      测试当前音色
+    </button>
+  </view>
+</view>
+```
+
+**JavaScript逻辑**:
 ```javascript
-// 添加性能监控
-const startTime = Date.now();
-const result = await speechService.speechToText(req.file.path);
-const processingTime = Date.now() - startTime;
+// 文件: frontend/pages/settings/settings.js
+Page({
+  data: {
+    autoTTS: true,
+    selectedVoiceIndex: 0,
+    speechRate: 1.0,
+    voiceOptions: [], // 动态加载
+    currentProvider: '',
+    loading: true
+  },
 
-console.log(`[STT] 处理耗时: ${processingTime}ms`);
+  onLoad() {
+    this.loadSettings();
+    this.loadVoiceOptions();
+  },
+
+  // 动态加载音色选项
+  async loadVoiceOptions() {
+    try {
+      wx.showLoading({ title: '加载音色选项...' });
+      
+      const response = await wx.request({
+        url: 'http://localhost:3000/api/speech/tts/voices',
+        method: 'GET'
+      });
+
+      if (response.statusCode === 200) {
+        this.setData({
+          voiceOptions: response.data.voices,
+          currentProvider: response.data.provider,
+          loading: false
+        });
+      }
+    } catch (error) {
+      console.error('加载音色选项失败:', error);
+      // 降级：使用默认选项
+      this.setData({
+        voiceOptions: [
+          {
+            id: 'default',
+            name: '默认音色',
+            description: '系统默认音色'
+          }
+        ],
+        loading: false
+      });
+    } finally {
+      wx.hideLoading();
+    }
+  },
+
+  loadSettings() {
+    const settings = wx.getStorageSync('tts_settings') || {};
+    this.setData({
+      autoTTS: settings.autoTTS !== false,
+      selectedVoiceIndex: settings.selectedVoiceIndex || 0,
+      speechRate: settings.speechRate || 1.0
+    });
+  },
+
+  saveSettings() {
+    wx.setStorageSync('tts_settings', {
+      autoTTS: this.data.autoTTS,
+      selectedVoiceIndex: this.data.selectedVoiceIndex,
+      speechRate: this.data.speechRate
+    });
+  },
+
+  toggleAutoTTS(e) {
+    this.setData({
+      autoTTS: e.detail.value
+    });
+    this.saveSettings();
+  },
+
+  changeVoice(e) {
+    this.setData({
+      selectedVoiceIndex: parseInt(e.detail.value)
+    });
+    this.saveSettings();
+  },
+
+  changeSpeechRate(e) {
+    this.setData({
+      speechRate: e.detail.value
+    });
+    this.saveSettings();
+  },
+
+  // 测试当前音色
+  async testCurrentVoice() {
+    if (this.data.voiceOptions.length === 0) {
+      wx.showToast({
+        title: '音色选项未加载',
+        icon: 'none'
+      });
+      return;
+    }
+
+    const currentVoice = this.data.voiceOptions[this.data.selectedVoiceIndex];
+    const testText = '您好，我是杨院长，很高兴为您提供整形美容咨询服务。';
+
+    try {
+      // 导入音频管理器（需要适配具体项目路径）
+      const AudioManager = require('../../utils/audioManager.js');
+      
+      wx.showLoading({ title: '生成测试语音...' });
+      
+      const success = await AudioManager.playTTSStream(testText, {
+        voice: currentVoice.id,
+        userId: 'settings_test'
+      });
+
+      if (success) {
+        wx.showToast({
+          title: '正在播放测试语音',
+          icon: 'success'
+        });
+      }
+    } catch (error) {
+      console.error('音色测试失败:', error);
+      wx.showToast({
+        title: '音色测试失败',
+        icon: 'none'
+      });
+    } finally {
+      wx.hideLoading();
+    }
+  }
+});
 ```
 
-### 预期效果
+**验证点**:
+- [ ] 设置界面正常显示
+- [ ] 设置保存和加载正确
+- [ ] 音色和语速设置生效
 
-- **流畅的录音体验**：按住即录，松开即发，操作直观
-- **实时视觉反馈**：波形动画让用户清楚看到录音状态
-- **智能手势控制**：上滑取消避免误发送
-- **准确的语音识别**：高质量STT转换，支持中文识别
-- **完善的错误处理**：各种异常情况都有合理的提示和处理
+### Phase 3: 集成测试和优化
+
+#### Task 3.1: 端到端功能测试
+**目标**: 验证完整的TTS功能流程
+**测试场景**:
+1. AI回复完成后自动朗读
+2. 点击朗读按钮控制播放
+3. 点击文本取消朗读
+4. 复制功能测试
+5. 设置项生效测试
+
+#### Task 3.2: 性能优化
+**目标**: 优化TTS性能和用户体验
+**优化方案**:
+1. 实现TTS预加载机制
+2. 音频数据压缩优化
+3. 网络请求优化
+4. 缓存策略优化
+
+#### Task 3.3: 错误处理和降级方案
+**目标**: 处理各种异常情况
+**处理方案**:
+1. 网络异常处理
+2. TTS服务异常处理
+3. 音频播放失败处理
+4. 降级到系统TTS方案
+
+## 验证标准
+
+### 功能验证
+- [ ] AI回复完成后自动开始朗读
+- [ ] 朗读过程中显示动态声波效果
+- [ ] 点击文本可以取消朗读
+- [ ] 复制按钮正常工作
+- [ ] 朗读控制按钮状态正确
+- [ ] 设置项正常保存和应用
+
+### 性能验证
+- [ ] TTS响应时间小于2秒
+- [ ] 音频播放流畅无卡顿
+- [ ] 内存使用合理
+- [ ] 多次播放无内存泄漏
+
+### 兼容性验证
+- [ ] **Azure TTS Provider**正常工作（音色切换、SSML支持）
+- [ ] **火山引擎TTS Provider**正常工作（WebSocket流式合成）
+- [ ] **Provider切换**无缝工作（通过环境变量PROVIDER_TYPE控制）
+- [ ] **音色动态加载**支持不同Provider的音色列表
+- [ ] **音频格式适配**支持MP3（Azure）和WAV（火山引擎）
+- [ ] 微信小程序环境正常
+- [ ] 不同设备音频播放正常
+- [ ] 网络异常时降级处理正确
+
+## 时间安排
+- **Week 1**: 后端TTS接口优化 (Task 1.1-1.2)
+- **Week 2**: 前端朗读功能实现 (Task 2.1-2.2) 
+- **Week 3**: TTS设置和优化 (Task 2.3, 3.1-3.3)
+- **Week 4**: 集成测试和部署
+
+## 成功标准
+1. **功能完整性**: 所有需求功能正常工作
+2. **用户体验**: 操作流畅，反馈及时
+3. **性能表现**: 响应快速，资源使用合理
+4. **稳定性**: 异常处理完善，降级方案有效

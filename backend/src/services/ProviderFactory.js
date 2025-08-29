@@ -71,7 +71,12 @@ class ProviderFactory {
       
       if (type === 'azure') {
         const AzureTTSProvider = require('../providers/azure/AzureTTSProvider');
-        this.instances[key] = new AzureTTSProvider(config);
+        this.instances[key] = new AzureTTSProvider({
+          speechKey: config.speechKey,
+          speechRegion: config.speechRegion,
+          speechEndpoint: config.speechEndpoint,
+          language: config.language
+        });
       } else if (type === 'volcengine') {
         const VolcengineTTSProviderV3 = require('../providers/volcengine/VolcengineTTSProviderV3');
         this.instances[key] = new VolcengineTTSProviderV3(config);

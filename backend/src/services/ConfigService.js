@@ -51,7 +51,7 @@ class ConfigService {
       speechKey: this.getEnvVar('AZURE_SPEECH_KEY'),
       speechRegion: this.getEnvVar('AZURE_SPEECH_REGION'),
       speechEndpoint: this.getEnvVar('AZURE_SPEECH_ENDPOINT'),
-      speechLanguage: this.getEnvVar('AZURE_SPEECH_LANGUAGE') || 'zh-CN'
+      language: this.getEnvVar('AZURE_SPEECH_LANGUAGE') || 'zh-CN'
     };
   }
 
