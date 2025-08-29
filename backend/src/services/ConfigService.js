@@ -59,6 +59,13 @@ class ConfigService {
    * 获取火山引擎配置
    */
   static getVolcengineConfig() {
+    const modelType = this.getEnvVar('VOLCENGINE_MODEL_TYPE') || 'standard';
+    const standardModel = this.getEnvVar('VOLCENGINE_ARK_MODEL');
+    const flashModel = this.getEnvVar('VOLCENGINE_ARK_MODEL_FLASH');
+    
+    // 根据模型类型选择实际使用的模型
+    const selectedModel = modelType === 'flash' ? flashModel : standardModel;
+    
     return {
       // 基础认证
       accessKey: this.getEnvVar('VOLCENGINE_ACCESS_KEY'),
@@ -67,14 +74,65 @@ class ConfigService {
       
       // LLM配置（豆包）
       apiKey: this.getEnvVar('VOLCENGINE_ARK_API_KEY') || this.getEnvVar('ARK_API_KEY'),
-      model: this.getEnvVar('VOLCENGINE_ARK_MODEL'),
+      model: selectedModel, // 动态选择的模型
+      modelStandard: standardModel,
+      modelFlash: flashModel,
+      modelType: modelType,
       baseURL: this.getEnvVar('VOLCENGINE_ARK_BASE_URL') || 'https://ark.cn-beijing.volces.com/api/v3',
       
       // 语音配置
       speechAppId: this.getEnvVar('VOLCENGINE_SPEECH_APP_ID'),
       asrEndpoint: this.getEnvVar('VOLCENGINE_ASR_ENDPOINT') || 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel',
-      ttsEndpoint: this.getEnvVar('VOLCENGINE_TTS_ENDPOINT') || 'https://openspeech.bytedance.com/api/v1/tts'
+      ttsEndpoint: this.getEnvVar('VOLCENGINE_TTS_ENDPOINT') || 'https://openspeech.bytedance.com/api/v1/tts',
+      
+      // 语音服务统一认证（ASR和TTS共用）
+      speechAccessToken: this.getEnvVar('VOLCENGINE_SPEECH_ACCESS_TOKEN'),
+      speechSecretKey: this.getEnvVar('VOLCENGINE_SPEECH_SECRET_KEY'),
+      
+      // TTS资源ID配置
+      ttsResourceId: this.getEnvVar('VOLCENGINE_TTS_RESOURCE_ID'),
+      // TTS音色配置
+      ttsVoice: this.getEnvVar('VOLCENGINE_TTS_VOICE')
     };
+  }
+
+  /**
+   * 获取火山引擎Flash模型配置
+   */
+  static getVolcengineFlashConfig() {
+    const config = this.getVolcengineConfig();
+    return {
+      ...config,
+      model: config.modelFlash || config.model // 使用Flash模型，如果没有则回退到普通模型
+    };
+  }
+
+  /**
+   * 获取可用的火山引擎模型列表
+   */
+  static getVolcengineModels() {
+    const config = this.getVolcengineConfig();
+    const models = [];
+    
+    if (config.modelStandard) {
+      models.push({
+        name: 'standard',
+        endpoint: config.modelStandard,
+        description: 'doubao-seed-1-6-250615 (标准版)',
+        selected: config.modelType === 'standard'
+      });
+    }
+    
+    if (config.modelFlash) {
+      models.push({
+        name: 'flash',
+        endpoint: config.modelFlash,
+        description: 'doubao-seed-1-6-flash-250715 (Flash版)',
+        selected: config.modelType === 'flash'
+      });
+    }
+    
+    return models;
   }
 
   /**
@@ -117,7 +175,7 @@ class ConfigService {
    */
   static validateVolcengineConfig(config) {
     const llmValid = !!(config.apiKey && config.model && config.baseURL);
-    const speechValid = !!(config.speechAppId);
+    const speechValid = !!(config.speechAppId && config.speechAccessToken && config.speechSecretKey);
     
     return {
       llm: llmValid,
@@ -125,7 +183,7 @@ class ConfigService {
       overall: llmValid && speechValid,
       missing: this.getMissingFields(config, [
         'apiKey', 'model', 'baseURL',
-        'speechAppId'
+        'speechAppId', 'speechAccessToken', 'speechSecretKey'
       ])
     };
   }

@@ -73,8 +73,8 @@ class ProviderFactory {
         const AzureTTSProvider = require('../providers/azure/AzureTTSProvider');
         this.instances[key] = new AzureTTSProvider(config);
       } else if (type === 'volcengine') {
-        const VolcengineTTSProvider = require('../providers/volcengine/VolcengineTTSProvider');
-        this.instances[key] = new VolcengineTTSProvider(config);
+        const VolcengineTTSProviderV3 = require('../providers/volcengine/VolcengineTTSProviderV3');
+        this.instances[key] = new VolcengineTTSProviderV3(config);
       } else {
         throw new Error(`Unsupported TTS provider: ${type}`);
       }
@@ -100,13 +100,21 @@ class ProviderFactory {
       results.llm = { status: 'error', error: error.message };
     }
 
-    // TODO: 添加ASR和TTS健康检查
-    // try {
-    //   const asrProvider = this.getASRProvider();
-    //   results.asr = await asrProvider.healthCheck();
-    // } catch (error) {
-    //   results.asr = { status: 'error', error: error.message };
-    // }
+    try {
+      const asrProvider = this.getASRProvider();
+      await asrProvider.initialize();
+      results.asr = await asrProvider.healthCheck();
+    } catch (error) {
+      results.asr = { status: 'error', error: error.message };
+    }
+
+    try {
+      const ttsProvider = this.getTTSProvider();
+      await ttsProvider.initialize();
+      results.tts = await ttsProvider.healthCheck();
+    } catch (error) {
+      results.tts = { status: 'error', error: error.message };
+    }
 
     return {
       provider: type,
