@@ -13,7 +13,7 @@ class AzureTTSProvider extends TTSProvider {
       speechEndpoint: config.speechEndpoint,
       language: config.language || 'zh-CN',
       // Azure默认配置
-      defaultVoice: 'zh-CN-XiaoxiaoNeural', // 普通话女声
+      defaultVoice: config.ttsVoice || 'zh-CN-XiaoxiaoNeural', // 从配置读取音色
       defaultFormat: 'audio-16khz-128kbitrate-mono-mp3',
       defaultSpeed: '0%',
       defaultPitch: '0%'

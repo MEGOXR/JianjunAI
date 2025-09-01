@@ -213,6 +213,16 @@ class WebSocketManager {
       return;
     }
     
+    // 处理TTS流式音频消息
+    if (data.type === 'tts_start' || data.type === 'tts_chunk' || data.type === 'tts_end' || data.type === 'tts_error') {
+      console.log('🔊 收到TTS消息:', data.type, data.messageId);
+      // 通知AudioPlayer处理TTS消息
+      if (this.page.audioPlayer && this.page.audioPlayer.handleTTSMessage) {
+        this.page.audioPlayer.handleTTSMessage(data);
+      }
+      return;
+    }
+    
     // 处理预热完成消息
     if (data.type === 'warmup_complete') {
       console.log('🔥 收到预热完成消息:', {

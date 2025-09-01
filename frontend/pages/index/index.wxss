@@ -209,6 +209,145 @@
   text-decoration: underline;
 }
 
+/* TTS控制按钮样式 */
+.message-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16rpx;
+  margin-top: 16rpx;
+  padding: 0 32rpx;
+}
+
+.control-btn {
+  width: 64rpx;
+  height: 64rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 32rpx;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.control-btn:active {
+  background: rgba(0, 0, 0, 0.1);
+  transform: scale(0.95);
+}
+
+.control-icon {
+  font-size: 32rpx;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.control-btn:active .control-icon {
+  opacity: 1;
+}
+
+/* 复制按钮特殊样式 */
+.copy-btn {
+  background: rgba(0, 122, 255, 0.1);
+}
+
+.copy-btn:active {
+  background: rgba(0, 122, 255, 0.2);
+}
+
+.copy-btn .control-icon {
+  color: #007AFF;
+}
+
+/* TTS按钮特殊样式 */
+.tts-btn {
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.tts-btn:active {
+  background: rgba(76, 175, 80, 0.2);
+}
+
+.tts-btn .control-icon {
+  color: #4CAF50;
+}
+
+/* 动态声波效果 */
+.sound-wave {
+  display: flex;
+  align-items: center;
+  gap: 4rpx;
+  height: 32rpx;
+  justify-content: center;
+}
+
+.wave-bar {
+  width: 4rpx;
+  background: #4CAF50;
+  border-radius: 2rpx;
+  animation: wave 1s infinite ease-in-out;
+}
+
+.bar1 { 
+  animation-delay: 0s; 
+  height: 8rpx;
+}
+.bar2 { 
+  animation-delay: 0.1s; 
+  height: 12rpx;
+}
+.bar3 { 
+  animation-delay: 0.2s; 
+  height: 16rpx;
+}
+.bar4 { 
+  animation-delay: 0.3s; 
+  height: 12rpx;
+}
+
+@keyframes wave {
+  0%, 40%, 100% {
+    transform: scaleY(0.4);
+    opacity: 0.5;
+  }
+  20% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+/* TTS控制按钮组在播放时的高亮 */
+.message-controls .tts-btn .sound-wave {
+  animation: pulse 2s infinite ease-in-out;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 响应式调整 */
+@media screen and (max-width: 600rpx) {
+  .message-controls {
+    gap: 12rpx;
+    padding: 0 24rpx;
+  }
+  
+  .control-btn {
+    width: 56rpx;
+    height: 56rpx;
+    border-radius: 28rpx;
+  }
+  
+  .control-icon {
+    font-size: 28rpx;
+  }
+}
+
 /* 回到底部按钮样式 */
 .scroll-to-bottom {
   position: fixed;

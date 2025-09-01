@@ -124,6 +124,14 @@ class MessageManager {
     
     console.log('消息接收完成');
     
+    // 触发AI回复完成的TTS处理
+    if (lastIndex != null) {
+      const completedMessage = this.page.data.messages[lastIndex];
+      if (completedMessage && completedMessage.type === 'ai') {
+        this.page.onAIResponseComplete(completedMessage);
+      }
+    }
+    
     // 清除响应超时
     this.page.webSocketManager.clearResponseTimeout();
     
@@ -155,6 +163,7 @@ class MessageManager {
   createUserMessage(content) {
     const app = getApp();
     const newUserMessage = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       role: 'user',
       content: content,
       timestamp: Date.now()
@@ -210,6 +219,7 @@ class MessageManager {
     
     const app = getApp();
     const msg = { 
+      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       role: 'assistant', 
       content: '', 
       timestamp: Date.now(), 

@@ -85,7 +85,7 @@ class VolcengineTTSProviderV3 extends TTSProvider {
         ws.on('open', () => {
           console.log(`TTS WebSocket连接建立: ${sessionId}`);
           
-          // 发送初始化请求
+          // 发送TTS请求 - 基于BytePlus文档格式
           const initPayload = {
             app: {
               appid: this.config.appId,
@@ -105,7 +105,7 @@ class VolcengineTTSProviderV3 extends TTSProvider {
               reqid: this.generateReqId(),
               text: text,
               text_type: 'plain',
-              operation: 'query',
+              operation: 'submit', // BytePlus文档要求使用'submit'
               sequence: 1
             }
           };
@@ -123,9 +123,53 @@ class VolcengineTTSProviderV3 extends TTSProvider {
           reject(error);
         });
         
-        ws.on('close', () => {
-          console.log(`TTS WebSocket连接已关闭: ${sessionId}`);
+        ws.on('close', (code, reason) => {
+          console.log(`TTS WebSocket连接已关闭: ${sessionId}, code: ${code}, reason: ${reason || '无'}`);
+          
+          // 检查是否已经收到完整音频数据
+          if (session.audioChunks && session.audioChunks.length > 0) {
+            console.log(`连接关闭但已收到${session.audioChunks.length}个音频块，尝试完成合成`);
+            
+            const combinedAudio = Buffer.concat(session.audioChunks);
+            const duration = (Date.now() - session.startTime) / 1000;
+            
+            console.log(`TTS合成完成（连接关闭）: ${sessionId}, 音频大小: ${combinedAudio.length} bytes`);
+            
+            if (combinedAudio.length > 0) {
+              session.resolve({
+                audioBuffer: combinedAudio,
+                format: this.config.defaultEncoding,
+                sampleRate: 16000,
+                duration: duration,
+                chunks: session.audioChunks.length
+              });
+              
+              this.sessions.delete(sessionId);
+              return;
+            }
+          }
+          
           this.sessions.delete(sessionId);
+          
+          // 如果连接异常关闭且还没有完成，则reject Promise
+          if (code !== 1000) {
+            const closeCodeMeanings = {
+              1001: '端点离开',
+              1002: '协议错误',
+              1003: '不支持的数据类型',
+              1006: '异常关闭（未发送关闭帧）',
+              1007: '无效的有效载荷数据',
+              1008: '违反策略',
+              1009: '消息太大',
+              1010: '客户端期望服务器协商扩展',
+              1011: '服务器遇到意外情况'
+            };
+            
+            const meaning = closeCodeMeanings[code] || '未知';
+            console.error(`WebSocket异常关闭: ${meaning} (${code})`);
+            
+            reject(new Error(`WebSocket连接异常关闭: ${meaning} (${code})`));
+          }
         });
         
         // 超时处理
@@ -146,19 +190,38 @@ class VolcengineTTSProviderV3 extends TTSProvider {
 
   sendMessage(ws, payload, messageType = 'data') {
     const payloadBytes = Buffer.from(JSON.stringify(payload), 'utf8');
+    
+    // 4字节头部
     const header = Buffer.alloc(4);
     
-    // 协议头：类似ASR的格式
-    if (messageType === 'init') {
-      header.writeUInt8(0x11, 0); // 初始化请求
-    } else {
-      header.writeUInt8(0x10, 0); // 数据请求
-    }
+    // 协议头：基于BytePlus文档的正确格式
+    // 协议版本(4bits) + 头部大小(4bits)
+    const protocolVersion = 0b0001; // 版本1
+    const headerSize = 0b0001; // 4字节头部
+    const versionAndSize = (protocolVersion << 4) | headerSize;
+    header.writeUInt8(versionAndSize, 0); // 第1字节：版本和头部大小
     
-    // 写入负载大小（小端序）
-    header.writeUIntLE(payloadBytes.length, 1, 3);
+    // 消息类型：Full Client Request = 0b0001 (1)
+    header.writeUInt8(0b0001, 1); // 第2字节：消息类型
     
-    const message = Buffer.concat([header, payloadBytes]);
+    // 消息类型特定标志 + 序列化方法
+    // 标志(4bits) + JSON序列化(4bits: 0b0001)
+    const flags = 0b0000; // 无特殊标志
+    const serialization = 0b0001; // JSON序列化
+    const flagsAndSerialization = (flags << 4) | serialization;
+    header.writeUInt8(flagsAndSerialization, 2); // 第3字节：标志和序列化
+    
+    // 保留字节
+    header.writeUInt8(0x00, 3); // 第4字节：保留
+    
+    // 4字节负载大小（大端序）
+    const payloadSizeBuffer = Buffer.alloc(4);
+    payloadSizeBuffer.writeUInt32BE(payloadBytes.length, 0);
+    
+    // 完整消息：Header + Payload Size + Payload
+    const message = Buffer.concat([header, payloadSizeBuffer, payloadBytes]);
+    
+    console.log(`发送TTS消息 - 头部: ${header.toString('hex')}, 负载大小: ${payloadBytes.length}, 总大小: ${message.length}`);
     
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(message);
@@ -169,71 +232,120 @@ class VolcengineTTSProviderV3 extends TTSProvider {
 
   handleMessage(session, rawData) {
     try {
-      // 解析协议头
-      const header = rawData.slice(0, 4);
-      const messageType = header.readUInt8(0);
-      const payloadSize = header.readUIntLE(1, 3);
+      // 初始化缓冲区如果不存在
+      if (!session.messageBuffer) {
+        session.messageBuffer = Buffer.alloc(0);
+        session.expectedSize = null;
+        session.headerParsed = false;
+      }
       
-      if (payloadSize > 0) {
-        const payload = rawData.slice(4, 4 + payloadSize);
+      // 将新数据添加到缓冲区
+      session.messageBuffer = Buffer.concat([session.messageBuffer, rawData]);
+      
+      console.log(`接收数据: ${rawData.length} bytes, 缓冲区总大小: ${session.messageBuffer.length} bytes`);
+      
+      // 解析协议头（如果还没解析）
+      if (!session.headerParsed && session.messageBuffer.length >= 8) {
+        const header = session.messageBuffer.slice(0, 4);
+        const payloadSizeBuffer = session.messageBuffer.slice(4, 8);
         
-        try {
-          const response = JSON.parse(payload.toString('utf8'));
-          
-          if (response.audio) {
-            // 接收到音频数据
-            const audioData = Buffer.from(response.audio, 'base64');
-            session.audioChunks.push(audioData);
-          }
-          
-          if (response.done || response.sequence === -1) {
-            // 合成完成
-            const combinedAudio = Buffer.concat(session.audioChunks);
-            const duration = (Date.now() - session.startTime) / 1000;
-            
-            console.log(`TTS合成完成: ${session.sessionId}, 音频大小: ${combinedAudio.length} bytes`);
-            
-            session.resolve({
-              audioBuffer: combinedAudio,
-              format: this.config.defaultEncoding,
-              sampleRate: 16000,
-              duration: duration,
-              chunks: session.audioChunks.length
-            });
-            
-            session.ws.close();
-            this.sessions.delete(session.sessionId);
-          }
-          
-          if (response.error) {
-            console.error(`TTS合成错误:`, response.error);
-            session.reject(new Error(response.error.message || '合成失败'));
-            session.ws.close();
-            this.sessions.delete(session.sessionId);
-          }
-        } catch (jsonError) {
-          // 可能是二进制音频数据
-          if (payloadSize > 100) { // 假设是音频数据
+        // 解析头部字节
+        const versionAndSize = header.readUInt8(0);
+        const protocolVersion = (versionAndSize >> 4) & 0x0F;
+        const headerSize = versionAndSize & 0x0F;
+        const messageType = header.readUInt8(1);
+        const flagsAndSerialization = header.readUInt8(2);
+        const flags = (flagsAndSerialization >> 4) & 0x0F;
+        const serialization = flagsAndSerialization & 0x0F;
+        
+        // 读取负载大小（大端序）
+        session.expectedSize = payloadSizeBuffer.readUInt32BE(0);
+        session.headerParsed = true;
+        session.messageType = messageType;
+        session.serialization = serialization;
+        
+        console.log(`TTS消息解析:`);
+        console.log(`- 协议版本: ${protocolVersion}`);
+        console.log(`- 消息类型: 0x${messageType.toString(16)} (${messageType})`);
+        console.log(`- 序列化方法: ${serialization}`);
+        console.log(`- 期望负载大小: ${session.expectedSize}`);
+      }
+      
+      // 检查是否接收到完整消息
+      if (session.headerParsed && session.messageBuffer.length >= 8 + session.expectedSize) {
+        const payload = session.messageBuffer.slice(8, 8 + session.expectedSize);
+        
+        console.log(`接收到完整消息，负载大小: ${payload.length} bytes`);
+        
+        // 根据消息类型和序列化方法处理
+        if (session.messageType === 11) { // Audio-only Server Response (0b1011)
+          if (session.serialization === 0) { // 无序列化，原始字节
+            console.log('接收到音频数据（二进制）');
             session.audioChunks.push(payload);
+            console.log(`添加音频数据: ${payload.length} bytes, 总块数: ${session.audioChunks.length}`);
           }
+        } else if (session.serialization === 1) { // JSON序列化
+          try {
+            const response = JSON.parse(payload.toString('utf8'));
+            console.log('JSON响应:', JSON.stringify(response, null, 2));
+            
+            if (response.audio) {
+              // 接收到音频数据（base64）
+              const audioData = Buffer.from(response.audio, 'base64');
+              session.audioChunks.push(audioData);
+              console.log(`添加音频数据: ${audioData.length} bytes, 总块数: ${session.audioChunks.length}`);
+            }
+            
+            if (response.done || response.sequence === -1) {
+              // 合成完成
+              const combinedAudio = Buffer.concat(session.audioChunks);
+              const duration = (Date.now() - session.startTime) / 1000;
+              
+              console.log(`TTS合成完成: ${session.sessionId}, 音频大小: ${combinedAudio.length} bytes`);
+              
+              session.resolve({
+                audioBuffer: combinedAudio,
+                format: this.config.defaultEncoding,
+                sampleRate: 16000,
+                duration: duration,
+                chunks: session.audioChunks.length
+              });
+              
+              session.ws.close();
+              this.sessions.delete(session.sessionId);
+              return;
+            }
+            
+            if (response.error) {
+              console.error(`TTS合成错误:`, response.error);
+              session.reject(new Error(response.error.message || '合成失败'));
+              session.ws.close();
+              this.sessions.delete(session.sessionId);
+              return;
+            }
+          } catch (jsonError) {
+            console.log('无法解析为JSON，但期望JSON格式');
+            console.log('负载内容:', payload.toString('utf8').substring(0, 200));
+          }
+        } else {
+          console.log(`未知的序列化方法: ${session.serialization}`);
         }
-      } else {
-        // 处理可能的结束标记
-        if (messageType === 0x20) { // 假设的结束标记
-          const combinedAudio = Buffer.concat(session.audioChunks);
-          const duration = (Date.now() - session.startTime) / 1000;
-          
-          session.resolve({
-            audioBuffer: combinedAudio,
-            format: this.config.defaultEncoding,
-            sampleRate: 16000,
-            duration: duration,
-            chunks: session.audioChunks.length
-          });
-          
-          session.ws.close();
-          this.sessions.delete(session.sessionId);
+        
+        // 重置缓冲区以处理下一条消息
+        const remainingData = session.messageBuffer.slice(8 + session.expectedSize);
+        session.messageBuffer = remainingData;
+        session.headerParsed = false;
+        session.expectedSize = null;
+        session.messageType = null;
+        session.serialization = null;
+        
+        // 如果还有剩余数据，递归处理
+        if (remainingData.length > 0) {
+          console.log(`处理剩余数据: ${remainingData.length} bytes`);
+          this.handleMessage(session, Buffer.alloc(0)); // 触发处理剩余数据
         }
+      } else if (session.headerParsed) {
+        console.log(`等待更多数据，当前: ${session.messageBuffer.length}, 需要: ${8 + session.expectedSize}`);
       }
     } catch (error) {
       console.error('解析TTS响应失败:', error);

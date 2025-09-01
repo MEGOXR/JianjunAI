@@ -1487,9 +1487,41 @@ jobs:
   - 未朗读/朗读完成：显示小喇叭图标
   - 点击重新朗读
 
-## 实施方案（PRP格式）
+## 模块化实施方案（PRP格式）
 
-### Phase 1: 后端TTS接口优化
+基于现有项目的模块化架构（WebSocketManager、MessageManager、VoiceRecorder等），TTS功能将采用相同的模块化设计模式。
+
+### 模块化架构设计
+
+#### 前端模块架构（简化版）
+```
+frontend/
+├── pages/index/modules/
+│   ├── tts-manager.js          # TTS核心管理模块（新增，简化版）
+│   ├── audio-player.js         # 音频播放控制模块（新增，简化版）
+│   ├── message-manager.js      # 消息管理模块（需扩展TTS支持）
+│   └── ...其他现有模块
+```
+
+**简化说明**：
+- 移除音色配置、语速设置等复杂功能
+- 使用后端默认配置，无需前端配置管理
+- 专注于核心的播放控制和自动朗读功能
+
+#### 后端模块架构
+```
+backend/src/
+├── controllers/
+│   └── ttsController.js        # TTS控制器（已存在，需完善）
+├── services/
+│   ├── TTSService.js           # TTS统一服务接口（新增）
+│   └── TTSCacheService.js      # TTS缓存服务（新增）
+└── providers/                  # Provider层（已存在）
+    ├── azure/AzureTTSProvider.js
+    └── volcengine/VolcengineTTSProvider.js
+```
+
+### Phase 1: 后端TTS模块完善
 
 #### Task 1.1: 创建TTS流式接口
 **目标**: 为前端提供TTS流式音频接口
@@ -1515,11 +1547,10 @@ exports.textToSpeechStream = async (req, res) => {
     const ttsProvider = ProviderFactory.getTTSProvider();
     await ttsProvider.initialize();
 
-    // 获取默认音色（基于当前Provider）
+    // 获取当前Provider的配置（包含默认音色）
     const providerType = ConfigService.getProviderType();
-    const defaultVoice = providerType === 'azure' 
-      ? 'zh-CN-XiaoxiaoNeural' 
-      : 'ICL_zh_male_lengjungaozhi_tob';
+    const providerConfig = ConfigService.getProviderConfig(providerType);
+    const defaultVoice = providerConfig.ttsVoice;
 
     // 动态设置响应头（根据Provider支持的格式）
     const supportedFormats = ttsProvider.getSupportedFormats();
@@ -1650,139 +1681,905 @@ module.exports = new TTSCacheService();
 - [ ] 相同文本快速返回缓存结果
 - [ ] 缓存大小和过期时间控制正确
 
-### Phase 2: 前端朗读功能实现
+### Phase 2: 前端TTS模块化实现
 
-#### Task 2.1: 实现音频播放管理器
-**目标**: 创建音频播放控制模块
+#### Task 2.1: 创建简化版音频播放模块
+**目标**: 创建简化的音频播放控制模块，专注核心播放功能
 **输入**: TTS音频流数据
-**输出**: 音频播放控制器
+**输出**: AudioPlayer模块类（简化版）
 
 **具体步骤**:
 ```javascript
-// 文件: frontend/utils/audioManager.js
-class AudioManager {
-  constructor() {
+// 文件: frontend/pages/index/modules/audio-player.js
+/**
+ * Audio Player Module (Simplified)
+ * 音频播放控制模块，处理TTS音频的播放和停止操作
+ */
+class AudioPlayer {
+  constructor(pageInstance) {
+    this.page = pageInstance;
     this.currentAudio = null;
     this.isPlaying = false;
-    this.audioContext = null;
-    this.sourceNode = null;
+    this.currentMessageId = null;
+    
+    // 播放状态回调
+    this.callbacks = {
+      onPlayStart: null,
+      onPlayEnd: null,
+      onPlayError: null
+    };
   }
 
-  async init() {
-    // 初始化Web Audio API
-    if (!this.audioContext) {
-      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
+  /**
+   * 设置播放状态回调
+   */
+  setCallbacks(callbacks) {
+    this.callbacks = { ...this.callbacks, ...callbacks };
   }
 
-  async playTTSStream(text, options = {}) {
+  /**
+   * 播放TTS音频流
+   */
+  async playTTSStream(text, messageId) {
     try {
+      console.log('AudioPlayer: 开始播放TTS', { messageId, textLength: text.length });
+      
       // 停止当前播放
       this.stop();
       
-      const response = await wx.request({
-        url: 'http://localhost:3000/api/speech/tts/stream',
-        method: 'POST',
-        data: {
-          text: text,
-          voice: options.voice, // 让后端根据Provider选择默认音色
-          userId: options.userId || 'miniprogram_user'
-        },
-        responseType: 'arraybuffer'
-      });
+      // 设置当前播放消息
+      this.currentMessageId = messageId;
+      
+      // 触发播放开始回调
+      if (this.callbacks.onPlayStart) {
+        this.callbacks.onPlayStart(messageId);
+      }
 
-      if (response.statusCode === 200) {
-        const audioBuffer = response.data;
-        // 检查音频格式（通过响应头）
-        const audioFormat = response.header['X-Audio-Format'] || 'wav';
-        
-        await this.playAudioBuffer(audioBuffer, audioFormat);
-        return true;
+      // 请求TTS音频
+      const audioData = await this.requestTTS(text);
+      
+      // 播放音频
+      await this.playAudioBuffer(audioData);
+      
+      return true;
+    } catch (error) {
+      console.error('AudioPlayer: 播放失败', error);
+      
+      // 触发错误回调
+      if (this.callbacks.onPlayError) {
+        this.callbacks.onPlayError(error, messageId);
       }
       
-      throw new Error(`TTS请求失败: ${response.statusCode}`);
-      
-    } catch (error) {
-      console.error('TTS播放失败:', error);
-      wx.showToast({
-        title: '语音播放失败',
-        icon: 'none'
-      });
       return false;
     }
   }
 
-  async playAudioBuffer(arrayBuffer, format = 'wav') {
-    // 在微信小程序中，使用 wx.createInnerAudioContext
-    // 因为小程序不支持Web Audio API
+  /**
+   * 请求TTS音频数据（简化版 - 使用默认配置）
+   */
+  async requestTTS(text) {
+    const config = require('../../../config/env.js');
+    
     return new Promise((resolve, reject) => {
-      try {
-        // 将ArrayBuffer转为临时文件
-        const tempFilePath = wx.env.USER_DATA_PATH + '/temp_audio.' + format;
+      wx.request({
+        url: `${config.API_BASE_URL}/api/speech/tts/stream`,
+        method: 'POST',
+        data: {
+          text: text,
+          userId: this.page.userId || 'miniprogram_user'
+        },
+        responseType: 'arraybuffer',
+        timeout: 30000,
         
-        wx.getFileSystemManager().writeFile({
-          filePath: tempFilePath,
-          data: arrayBuffer,
-          success: () => {
-            // 创建音频上下文
-            const audioContext = wx.createInnerAudioContext();
-            audioContext.src = tempFilePath;
-            
-            audioContext.onPlay(() => {
-              this.isPlaying = true;
+        success: (res) => {
+          if (res.statusCode === 200 && res.data) {
+            const audioFormat = res.header['X-Audio-Format'] || 'wav';
+            resolve({
+              buffer: res.data,
+              format: audioFormat
             });
-            
-            audioContext.onEnded(() => {
-              this.isPlaying = false;
-              audioContext.destroy();
-              // 清理临时文件
-              wx.getFileSystemManager().unlink({
-                filePath: tempFilePath,
-                complete: () => {}
-              });
-              resolve();
-            });
-            
-            audioContext.onError((error) => {
-              this.isPlaying = false;
-              audioContext.destroy();
-              reject(error);
-            });
-            
-            audioContext.play();
-            this.currentAudio = audioContext;
-          },
-          fail: reject
+          } else {
+            reject(new Error(`TTS请求失败: ${res.statusCode}`));
+          }
+        },
+        
+        fail: (error) => {
+          reject(new Error(`网络请求失败: ${error.errMsg}`));
+        }
+      });
+    });
+  }
+
+  /**
+   * 播放音频缓冲区
+   */
+  async playAudioBuffer(audioData) {
+    return new Promise((resolve, reject) => {
+      // 生成临时文件路径
+      const tempFilePath = `${wx.env.USER_DATA_PATH}/tts_${Date.now()}.${audioData.format}`;
+      
+      // 写入临时文件
+      wx.getFileSystemManager().writeFile({
+        filePath: tempFilePath,
+        data: audioData.buffer,
+        success: () => {
+          // 创建音频上下文
+          const audioContext = wx.createInnerAudioContext();
+          audioContext.src = tempFilePath;
+          audioContext.autoplay = true;
+          
+          // 设置当前音频
+          this.currentAudio = audioContext;
+          this.isPlaying = true;
+          
+          // 播放事件监听
+          audioContext.onPlay(() => {
+            this.isPlaying = true;
+          });
+          
+          audioContext.onEnded(() => {
+            this.cleanup(audioContext, tempFilePath);
+            if (this.callbacks.onPlayEnd) {
+              this.callbacks.onPlayEnd(this.currentMessageId);
+            }
+            resolve();
+          });
+          
+          audioContext.onError((error) => {
+            this.cleanup(audioContext, tempFilePath);
+            if (this.callbacks.onPlayError) {
+              this.callbacks.onPlayError(error, this.currentMessageId);
+            }
+            reject(error);
+          });
+          
+          audioContext.onStop(() => {
+            this.cleanup(audioContext, tempFilePath);
+            if (this.callbacks.onPlayEnd) {
+              this.callbacks.onPlayEnd(this.currentMessageId);
+            }
+            resolve();
+          });
+        },
+        
+        fail: (error) => {
+          reject(error);
+        }
+      });
+    });
+  }
+
+  /**
+   * 停止播放
+   */
+  stop() {
+    if (this.currentAudio && this.isPlaying) {
+      this.currentAudio.stop();
+    }
+  }
+
+  /**
+   * 清理音频资源
+   */
+  cleanup(audioContext, tempFilePath) {
+    // 重置状态
+    this.isPlaying = false;
+    this.currentMessageId = null;
+    
+    // 销毁音频上下文
+    if (audioContext) {
+      audioContext.destroy();
+    }
+    
+    // 重置当前音频
+    if (this.currentAudio === audioContext) {
+      this.currentAudio = null;
+    }
+    
+    // 删除临时文件
+    if (tempFilePath) {
+      wx.getFileSystemManager().unlink({
+        filePath: tempFilePath,
+        success: () => console.log('AudioPlayer: 临时文件已删除'),
+        fail: (error) => console.warn('AudioPlayer: 临时文件删除失败', error)
+      });
+    }
+  }
+
+  /**
+   * 获取播放状态
+   */
+  getPlayingStatus() {
+    return {
+      isPlaying: this.isPlaying,
+      currentMessageId: this.currentMessageId
+    };
+  }
+
+  /**
+   * 检查消息是否正在播放
+   */
+  isMessagePlaying(messageId) {
+    return this.isPlaying && this.currentMessageId === messageId;
+  }
+}
+
+module.exports = AudioPlayer;
+```
+
+#### Task 2.2: 创建TTS管理模块
+**目标**: 创建TTS核心管理模块，统一管理TTS功能
+**输入**: 页面实例和消息数据
+**输出**: TTSManager模块类
+
+**具体步骤**:
+```javascript
+// 文件: frontend/pages/index/modules/tts-manager.js
+/**
+ * TTS Manager Module
+ * TTS核心管理模块，处理TTS功能的整体协调和状态管理
+ */
+class TTSManager {
+  constructor(pageInstance) {
+    this.page = pageInstance;
+    this.audioPlayer = null;
+    this.settings = {
+      autoTTS: true,
+      selectedVoiceIndex: 0,
+      speechRate: 1.0
+    };
+    
+    // 初始化音频播放器
+    this.initializeAudioPlayer();
+  }
+
+  /**
+   * 初始化音频播放器
+   */
+  initializeAudioPlayer() {
+    const AudioPlayer = require('./audio-player.js');
+    this.audioPlayer = new AudioPlayer(this.page);
+    
+    // 设置播放回调
+    this.audioPlayer.setCallbacks({
+      onPlayStart: this.onPlayStart.bind(this),
+      onPlayEnd: this.onPlayEnd.bind(this),
+      onPlayError: this.onPlayError.bind(this)
+    });
+  }
+
+  /**
+   * 初始化TTS设置
+   */
+  initialize() {
+    console.log('TTSManager: 初始化');
+    
+    // 加载用户设置
+    this.loadSettings();
+    
+    // 更新页面数据
+    this.page.setData({
+      autoTTS: this.settings.autoTTS
+    });
+  }
+
+  /**
+   * 加载TTS设置
+   */
+  loadSettings() {
+    try {
+      const savedSettings = wx.getStorageSync('tts_settings') || {};
+      this.settings = {
+        autoTTS: savedSettings.autoTTS !== false,
+        selectedVoiceIndex: savedSettings.selectedVoiceIndex || 0,
+        speechRate: savedSettings.speechRate || 1.0
+      };
+      console.log('TTSManager: 设置已加载', this.settings);
+    } catch (error) {
+      console.error('TTSManager: 设置加载失败', error);
+    }
+  }
+
+  /**
+   * 保存TTS设置
+   */
+  saveSettings() {
+    try {
+      wx.setStorageSync('tts_settings', this.settings);
+      console.log('TTSManager: 设置已保存', this.settings);
+    } catch (error) {
+      console.error('TTSManager: 设置保存失败', error);
+    }
+  }
+
+  /**
+   * 复制消息内容
+   */
+  copyMessage(content) {
+    if (!content) {
+      wx.showToast({
+        title: '没有可复制的内容',
+        icon: 'none'
+      });
+      return;
+    }
+    
+    wx.setClipboardData({
+      data: content,
+      success: () => {
+        wx.showToast({
+          title: '已复制到剪贴板',
+          icon: 'success',
+          duration: 1500
         });
-      } catch (error) {
-        reject(error);
+      },
+      fail: () => {
+        wx.showToast({
+          title: '复制失败',
+          icon: 'none'
+        });
       }
     });
   }
 
-  stop() {
-    if (this.currentAudio) {
-      this.currentAudio.stop();
-      this.currentAudio.destroy();
-      this.currentAudio = null;
+  /**
+   * 切换TTS播放状态
+   */
+  async toggleTTS(messageId) {
+    const message = this.findMessageById(messageId);
+    if (!message) {
+      console.error('TTSManager: 消息未找到', messageId);
+      return;
     }
-    this.isPlaying = false;
+
+    console.log('TTSManager: 切换TTS播放', { messageId, isPlaying: message.isPlaying });
+
+    if (message.isPlaying) {
+      // 停止播放
+      this.audioPlayer.stop();
+    } else {
+      // 开始播放
+      await this.playMessageTTS(message);
+    }
   }
 
+  /**
+   * 播放消息TTS
+   */
+  async playMessageTTS(message) {
+    if (!message || !message.content) {
+      console.error('TTSManager: 消息内容无效', message);
+      return;
+    }
+
+    console.log('TTSManager: 开始播放消息TTS', message.id);
+
+    // 立即更新UI状态
+    this.updateMessagePlayingStatus(message.id, true);
+
+    // 播放TTS
+    const success = await this.audioPlayer.playTTSStream(message.content, {
+      messageId: message.id,
+      userId: this.page.userId
+    });
+
+    if (!success) {
+      // 播放失败，重置状态
+      this.updateMessagePlayingStatus(message.id, false);
+    }
+  }
+
+  /**
+   * AI消息点击处理（取消朗读）
+   */
+  onAIMessageTap(messageId) {
+    const message = this.findMessageById(messageId);
+    if (message && message.isPlaying) {
+      console.log('TTSManager: 点击消息取消朗读', messageId);
+      this.audioPlayer.stop();
+    }
+  }
+
+  /**
+   * AI回复完成后的处理
+   */
+  onAIResponseComplete(message) {
+    console.log('TTSManager: AI回复完成', {
+      messageId: message.id,
+      autoTTS: this.settings.autoTTS,
+      contentLength: message.content ? message.content.length : 0
+    });
+
+    // 确保消息有唯一ID
+    if (!message.id) {
+      message.id = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+
+    // 添加TTS播放状态
+    message.isPlaying = false;
+
+    // 自动朗读（如果启用）
+    if (this.settings.autoTTS && message.content && message.content.trim()) {
+      console.log('TTSManager: 自动开始朗读');
+      setTimeout(() => {
+        this.playMessageTTS(message);
+      }, 800); // 延迟800ms让用户看到完整回复
+    }
+  }
+
+  /**
+   * 更新消息播放状态
+   */
+  updateMessagePlayingStatus(messageId, isPlaying) {
+    const messages = this.page.data.messages.map(msg => {
+      if (msg.id === messageId) {
+        return { ...msg, isPlaying };
+      }
+      // 确保同时只有一个消息在播放
+      return { ...msg, isPlaying: false };
+    });
+
+    this.page.setData({ messages });
+    console.log(`TTSManager: 更新播放状态 ${messageId} -> ${isPlaying}`);
+  }
+
+  /**
+   * 根据ID查找消息
+   */
+  findMessageById(messageId) {
+    return this.page.data.messages.find(msg => msg.id === messageId);
+  }
+
+  /**
+   * 播放开始回调
+   */
+  onPlayStart(messageId) {
+    console.log('TTSManager: 播放开始', messageId);
+    this.updateMessagePlayingStatus(messageId, true);
+  }
+
+  /**
+   * 播放结束回调
+   */
+  onPlayEnd(messageId) {
+    console.log('TTSManager: 播放结束', messageId);
+    this.updateMessagePlayingStatus(messageId, false);
+  }
+
+  /**
+   * 播放错误回调
+   */
+  onPlayError(error, messageId) {
+    console.error('TTSManager: 播放错误', error, messageId);
+    if (messageId) {
+      this.updateMessagePlayingStatus(messageId, false);
+    }
+    
+    wx.showToast({
+      title: '语音播放失败',
+      icon: 'none',
+      duration: 2000
+    });
+  }
+
+  /**
+   * 获取播放状态
+   */
   getPlayingStatus() {
-    return this.isPlaying;
+    return this.audioPlayer.getPlayingStatus();
+  }
+
+  /**
+   * 设置自动朗读
+   */
+  setAutoTTS(enabled) {
+    this.settings.autoTTS = enabled;
+    this.saveSettings();
+    this.page.setData({ autoTTS: enabled });
   }
 }
 
-export default new AudioManager();
+module.exports = TTSManager;
+```
+
+#### Task 2.3: 创建TTS配置工具
+**目标**: 创建TTS配置管理工具模块
+**输入**: 用户设置和系统配置
+**输出**: TTS配置工具类
+
+**具体步骤**:
+```javascript
+// 文件: frontend/utils/tts-config.js
+/**
+ * TTS Configuration Utility
+ * TTS配置管理工具，处理设置的加载、保存和API配置
+ */
+const envConfig = require('../config/env.js');
+
+class TTSConfig {
+  constructor() {
+    this.defaultSettings = {
+      autoTTS: true,
+      selectedVoiceIndex: 0,
+      speechRate: 1.0,
+      voices: []
+    };
+    
+    this.cachedVoices = null;
+    this.lastVoiceUpdate = 0;
+  }
+
+  /**
+   * 获取API基础URL
+   */
+  getAPIBaseURL() {
+    return envConfig.API_BASE_URL || 'http://localhost:3000';
+  }
+
+  /**
+   * 获取用户TTS设置
+   */
+  getUserSettings() {
+    try {
+      const settings = wx.getStorageSync('tts_settings') || {};
+      return {
+        ...this.defaultSettings,
+        ...settings
+      };
+    } catch (error) {
+      console.error('TTSConfig: 获取用户设置失败', error);
+      return { ...this.defaultSettings };
+    }
+  }
+
+  /**
+   * 保存用户TTS设置
+   */
+  saveUserSettings(settings) {
+    try {
+      const currentSettings = this.getUserSettings();
+      const newSettings = { ...currentSettings, ...settings };
+      wx.setStorageSync('tts_settings', newSettings);
+      console.log('TTSConfig: 设置已保存', newSettings);
+      return true;
+    } catch (error) {
+      console.error('TTSConfig: 设置保存失败', error);
+      return false;
+    }
+  }
+
+  /**
+   * 获取选中的音色ID
+   */
+  getSelectedVoice() {
+    const settings = this.getUserSettings();
+    if (settings.voices && settings.voices.length > 0) {
+      const selectedVoice = settings.voices[settings.selectedVoiceIndex];
+      return selectedVoice ? selectedVoice.id : undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * 获取支持的音色列表（带缓存）
+   */
+  async getSupportedVoices(forceRefresh = false) {
+    const now = Date.now();
+    const cacheTimeout = 5 * 60 * 1000; // 5分钟缓存
+    
+    // 检查缓存
+    if (!forceRefresh && this.cachedVoices && (now - this.lastVoiceUpdate < cacheTimeout)) {
+      return this.cachedVoices;
+    }
+
+    try {
+      const response = await new Promise((resolve, reject) => {
+        wx.request({
+          url: `${this.getAPIBaseURL()}/api/speech/tts/voices`,
+          method: 'GET',
+          timeout: 10000,
+          success: resolve,
+          fail: reject
+        });
+      });
+
+      if (response.statusCode === 200) {
+        this.cachedVoices = response.data;
+        this.lastVoiceUpdate = now;
+        
+        // 保存音色列表到设置中
+        const settings = this.getUserSettings();
+        settings.voices = response.data.voices || [];
+        this.saveUserSettings(settings);
+        
+        console.log('TTSConfig: 音色列表已更新', response.data);
+        return response.data;
+      } else {
+        throw new Error(`API请求失败: ${response.statusCode}`);
+      }
+    } catch (error) {
+      console.error('TTSConfig: 获取音色列表失败', error);
+      
+      // 降级：返回缓存或默认值
+      if (this.cachedVoices) {
+        return this.cachedVoices;
+      }
+      
+      return {
+        provider: 'unknown',
+        voices: [{
+          id: 'default',
+          name: '默认音色',
+          description: '系统默认音色'
+        }],
+        defaultVoice: 'default'
+      };
+    }
+  }
+
+  /**
+   * 测试指定音色
+   */
+  async testVoice(voiceId, testText = '您好，我是杨院长，很高兴为您提供整形美容咨询服务。') {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        wx.request({
+          url: `${this.getAPIBaseURL()}/api/speech/tts/stream`,
+          method: 'POST',
+          data: {
+            text: testText,
+            voice: voiceId,
+            userId: 'voice_test'
+          },
+          responseType: 'arraybuffer',
+          timeout: 15000,
+          success: resolve,
+          fail: reject
+        });
+      });
+
+      return response.statusCode === 200;
+    } catch (error) {
+      console.error('TTSConfig: 音色测试失败', error);
+      return false;
+    }
+  }
+
+  /**
+   * 获取TTS服务健康状态
+   */
+  async getHealthStatus() {
+    try {
+      const response = await new Promise((resolve, reject) => {
+        wx.request({
+          url: `${this.getAPIBaseURL()}/api/speech/tts/health`,
+          method: 'GET',
+          timeout: 5000,
+          success: resolve,
+          fail: reject
+        });
+      });
+
+      if (response.statusCode === 200) {
+        return response.data;
+      } else {
+        throw new Error(`健康检查失败: ${response.statusCode}`);
+      }
+    } catch (error) {
+      console.error('TTSConfig: 健康检查失败', error);
+      return {
+        status: 'unhealthy',
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * 重置所有设置
+   */
+  resetSettings() {
+    try {
+      wx.removeStorageSync('tts_settings');
+      this.cachedVoices = null;
+      this.lastVoiceUpdate = 0;
+      console.log('TTSConfig: 设置已重置');
+      return true;
+    } catch (error) {
+      console.error('TTSConfig: 重置设置失败', error);
+      return false;
+    }
+  }
+}
+
+// 导出单例
+const ttsConfig = new TTSConfig();
+module.exports = ttsConfig;
+```
+
+#### Task 2.4: 集成TTS模块到主页面
+**目标**: 将TTS模块集成到主页面的模块化架构中
+**输入**: 现有页面架构和TTS模块
+**输出**: 集成后的页面逻辑
+
+**具体步骤**:
+```javascript
+// 文件: frontend/pages/index/index.js（修改部分）
+// Import all modules
+const WebSocketManager = require('./modules/websocket-manager.js');
+const VoiceRecorder = require('./modules/voice-recorder.js');
+const StreamingSpeechManager = require('./modules/streaming-speech.js');
+const MessageManager = require('./modules/message-manager.js');
+const ScrollController = require('./modules/scroll-controller.js');
+const UIStateManager = require('./modules/ui-state-manager.js');
+const TTSManager = require('./modules/tts-manager.js'); // 新增TTS模块
+
+Page({
+  // 核心数据状态 - 只保留UI渲染必需的数据
+  data: {
+    userInput: "", 
+    isConnecting: false, 
+    messages: [], 
+    isVoiceMode: false,
+    isRecording: false,
+    showScrollToBottom: false,
+    userHasScrolledUp: false,
+    scrollIntoView: '',
+    messageCount: 0,
+    isGenerating: false,
+    
+    // 语音相关状态
+    recordingDuration: 0,
+    isRecordingCanceling: false,
+    waveformData: [],
+    recordingStartY: 0,
+    showVoiceModal: false,
+    recordingText: '按住说话',
+    isInputRecording: false,
+    keyboardHeight: 0,
+    
+    // 流式语音识别状态
+    isStreamingSpeech: false,
+    
+    // TTS相关状态（新增）
+    autoTTS: true
+  },
+
+  onLoad: function() {
+    // 初始化实例属性
+    this.userId = null;
+    this.authToken = null;
+    
+    // 初始化所有模块（包括新的TTS模块）
+    this.webSocketManager = new WebSocketManager(this);
+    this.voiceRecorder = new VoiceRecorder(this);
+    this.streamingSpeechManager = new StreamingSpeechManager(this);
+    this.messageManager = new MessageManager(this);
+    this.scrollController = new ScrollController(this);
+    this.uiStateManager = new UIStateManager(this);
+    this.ttsManager = new TTSManager(this); // 新增TTS管理器
+    
+    // 初始化页面
+    this.uiStateManager.initialize();
+    
+    // 初始化TTS（新增）
+    this.ttsManager.initialize();
+  },
+
+  // ... 现有方法保持不变 ...
+
+  // ==================== TTS 方法（新增） ====================
+  
+  /**
+   * 复制消息内容
+   */
+  copyMessage: function(e) {
+    const content = e.currentTarget.dataset.content;
+    this.ttsManager.copyMessage(content);
+  },
+
+  /**
+   * 切换TTS播放状态
+   */
+  toggleTTS: function(e) {
+    const messageId = e.currentTarget.dataset.messageId;
+    this.ttsManager.toggleTTS(messageId);
+  },
+
+  /**
+   * AI消息点击处理（取消朗读）
+   */
+  onAIMessageTap: function(e) {
+    const messageId = e.currentTarget.dataset.messageId;
+    this.ttsManager.onAIMessageTap(messageId);
+  },
+
+  /**
+   * AI回复完成后的处理（需要在MessageManager中调用）
+   */
+  onAIResponseComplete: function(message) {
+    this.ttsManager.onAIResponseComplete(message);
+  }
+});
+```
+
+#### Task 2.5: 扩展MessageManager支持TTS
+**目标**: 在MessageManager中集成TTS回调
+**输入**: 现有MessageManager和TTS功能
+**输出**: 支持TTS的MessageManager
+
+**具体步骤**:
+```javascript
+// 文件: frontend/pages/index/modules/message-manager.js（修改部分）
+/**
+ * Message Manager Module
+ * 处理消息收发、流式渲染、本地存储
+ */
+class MessageManager {
+  constructor(pageInstance) {
+    this.page = pageInstance;
+    this.messageCount = 0;
+    
+    // 流式渲染控制器
+    this._stream = { 
+      buf: '',
+      timer: null,
+      targetIndex: null
+    };
+  }
+
+  // ... 现有方法保持不变 ...
+
+  /**
+   * 添加AI消息到列表
+   * @param {string} content - 消息内容
+   * @param {Array} suggestions - 建议问题列表
+   */
+  addAIMessage(content, suggestions = null) {
+    // 确保消息有唯一ID（TTS需要）
+    const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    const aiMessage = {
+      id: messageId, // TTS需要的唯一ID
+      role: 'assistant',
+      content: content,
+      timestamp: new Date().toISOString(),
+      suggestions: suggestions,
+      isPlaying: false, // TTS播放状态
+      formattedDate: this.shouldShowDate() ? this.formatDate(new Date()) : null
+    };
+
+    this.page.data.messages.push(aiMessage);
+    this.page.setData({ 
+      messages: this.page.data.messages,
+      isGenerating: false
+    });
+
+    // 滚动到底部
+    this.page.scrollController.scheduleAutoScroll();
+
+    // 通知TTS管理器AI回复完成（新增）
+    if (this.page.ttsManager && content && content.trim()) {
+      setTimeout(() => {
+        this.page.ttsManager.onAIResponseComplete(aiMessage);
+      }, 100); // 短暂延迟确保UI更新完成
+    }
+
+    return messageId;
+  }
+
+  // ... 其他现有方法保持不变 ...
+}
+
+module.exports = MessageManager;
 ```
 
 **验证点**:
-- [ ] 音频播放功能正常
-- [ ] 播放状态管理正确
-- [ ] 停止播放功能正常
+- [ ] TTS模块正确集成到页面架构
+- [ ] 模块间通信正常工作
+- [ ] AI回复完成后自动触发TTS
+- [ ] 页面架构保持一致性
 
-#### Task 2.2: 实现AI回复朗读控制组件
+#### Task 2.6: UI组件和样式实现
 **目标**: 为AI消息添加朗读控制UI
 **输入**: AI回复消息数据
 **输出**: 带朗读控制的消息组件
@@ -2251,3 +3048,421 @@ Page({
 2. **用户体验**: 操作流畅，反馈及时
 3. **性能表现**: 响应快速，资源使用合理
 4. **稳定性**: 异常处理完善，降级方案有效
+
+---
+
+# AI回复自动朗读功能 - 实施状态报告
+
+## 实施完成情况 (2025-08-30)
+
+### ✅ 已完成的功能模块
+
+#### 1. 后端TTS服务集成
+- **TTS路由配置**: ✅ 完成
+  - 添加TTS流式接口 `/api/speech/tts/stream`
+  - 添加TTS健康检查 `/api/speech/tts/health`
+  - 添加音色列表接口 `/api/speech/tts/voices`
+  - 所有接口已添加JWT认证中间件
+
+#### 2. 前端模块化TTS实现
+- **AudioPlayer模块**: ✅ 完成 (`frontend/pages/index/modules/audio-player.js`)
+  - TTS音频请求和播放功能
+  - 临时文件管理和清理
+  - 完善的错误处理机制
+  
+- **TTSManager模块**: ✅ 完成 (`frontend/pages/index/modules/tts-manager.js`)
+  - TTS核心管理和状态控制
+  - 自动朗读功能集成
+  - 播放状态回调处理
+  
+- **主页面集成**: ✅ 完成 (`frontend/pages/index/index.js`)
+  - TTSManager初始化
+  - 事件处理函数绑定
+  - 模块化架构保持一致
+
+#### 3. UI组件和用户交互
+- **消息控制按钮**: ✅ 完成 (`frontend/pages/index/index.wxml`)
+  - 复制消息按钮 📋
+  - TTS播放控制按钮 🔊
+  - 播放中声波动画效果
+  
+- **样式和动画**: ✅ 完成 (`frontend/pages/index/index.wxss`)
+  - TTS控制按钮样式
+  - 声波动画效果
+  - 响应式交互反馈
+
+#### 4. 自动朗读集成
+- **MessageManager扩展**: ✅ 完成
+  - AI回复完成时自动调用TTS功能
+  - 集成到`handleStreamingComplete`方法
+  - 保持现有消息处理流程
+
+### 🔧 技术实施细节
+
+#### 模块化架构设计
+按照项目现有的模块化模式，TTS功能采用相同的架构风格：
+```
+frontend/pages/index/modules/
+├── audio-player.js      # 音频播放控制 (新增)
+├── tts-manager.js       # TTS管理器 (新增)  
+├── message-manager.js   # 消息管理 (已扩展)
+└── ... (其他现有模块)
+```
+
+#### 简化配置策略
+根据用户需求，移除了复杂的用户配置选项：
+- 使用后端默认音色和配置
+- 仅保留自动朗读开关功能
+- 专注核心播放控制功能
+
+#### 错误处理机制
+- **网络错误**: 显示"语音播放失败"提示
+- **音频播放错误**: 自动重置播放状态
+- **API超时**: 前端优雅降级处理
+
+### ⚠️ 已知技术问题
+
+#### 1. Volcengine TTS连接问题
+- **现象**: WebSocket连接建立后立即关闭
+- **状态**: 后端服务正常启动，健康检查通过
+- **可能原因**: 
+  - 网络访问限制
+  - Volcengine API认证配置问题
+  - WebSocket协议兼容性问题
+- **影响**: TTS功能前端已完成，等待后端API稳定
+
+#### 2. 当前工作状态
+- **前端功能**: 100% 完成并集成
+- **后端接口**: 已配置但等待Volcengine连接稳定
+- **用户体验**: 错误处理完善，失败时有友好提示
+
+### 🎯 测试验证状态
+
+#### 前端功能测试
+- ✅ TTS管理器初始化正常
+- ✅ UI控制按钮显示正确
+- ✅ 声波动画效果正常
+- ✅ 错误处理机制完善
+- ✅ 自动朗读触发机制集成
+
+#### 集成测试
+- ✅ 模块化架构集成无冲突
+- ✅ 事件处理函数正确绑定
+- ✅ 消息流程扩展无副作用
+- ⚠️ 端到端TTS功能待后端API稳定后验证
+
+### 📋 后续工作建议
+
+1. **Volcengine TTS连接问题排查**
+   - 检查网络连接和防火墙设置
+   - 验证Volcengine API密钥和配置
+   - 考虑WebSocket协议调试
+
+2. **生产环境验证**
+   - 在Volcengine API稳定后进行完整的端到端测试
+   - 验证不同网络环境下的连接稳定性
+
+3. **性能优化 (可选)**
+   - 考虑添加音频缓存机制
+   - 实施TTS预加载策略
+
+## 总结
+
+AI回复自动朗读功能的前端实现已100%完成，采用模块化架构，与现有代码完美集成。功能包括自动朗读、手动控制、错误处理等核心特性。目前唯一的阻碍是Volcengine TTS服务的网络连接问题，一旦解决后即可提供完整的TTS体验。
+
+---
+
+# TTS音频播放截断问题分析与解决方案 (2025-08-31)
+
+## 问题现状
+
+### 发现的问题
+在TTS功能测试中发现音频播放不完整的问题：
+- **症状**: 长文本TTS音频只播放前面几秒就停止
+- **具体表现**: 155个字的文本预期播放约28秒，实际只播放6.624秒
+- **影响范围**: 所有长文本的TTS播放
+
+### 问题分析
+
+#### 1. 后端音频生成状态
+✅ **后端生成正常**: 
+- 音频完整生成（229KB，64个音频块）
+- 时间线完整覆盖全文（28.133秒）
+- 保存的调试文件包含完整音频内容
+
+#### 2. 前端播放问题
+❌ **播放截断**: 
+- HTTP请求成功返回200状态码
+- 前端接收到的数据大小正确（229KB）
+- 但实际播放时长仅6.624秒就触发`onEnded`事件
+
+#### 3. 根本原因推测
+
+**主要原因**: 微信小程序音频组件对大文件播放的限制或兼容性问题
+- 音频文件可能在写入临时存储时被截断
+- wx.createInnerAudioContext对长音频的支持限制
+- 音频格式兼容性问题（MP3编码/解码）
+
+**次要原因**: 
+- 网络传输中的数据流处理问题
+- 临时文件系统的存储限制
+- 音频上下文生命周期管理问题
+
+## 解决方案设计
+
+### 方案1: WebSocket流式音频播放 (推荐)
+
+**设计思路**: 将TTS音频改为WebSocket实时流式传输，分块播放
+
+#### 技术架构
+```javascript
+// 后端: 流式推送音频块
+class TTSWebSocketStreaming {
+  async streamTextToSpeech(text, options) {
+    // 1. 建立WebSocket连接
+    // 2. 实时推送音频块
+    // 3. 发送播放控制信号
+    
+    return {
+      startSignal: () => ws.send({type: 'tts_start', messageId}),
+      audioChunk: (chunk) => ws.send({type: 'tts_chunk', data: chunk}),
+      endSignal: () => ws.send({type: 'tts_end', messageId})
+    }
+  }
+}
+
+// 前端: 接收并串行播放音频块
+class StreamingAudioPlayer {
+  async handleTTSStream(messageId) {
+    // 1. 接收开始信号
+    // 2. 收集音频块并串行播放
+    // 3. 处理结束信号
+  }
+}
+```
+
+#### 实施步骤
+
+**Phase 1: 后端流式改造**
+1. **WebSocket TTS控制器**
+   ```javascript
+   // backend/src/controllers/ttsWebSocketController.js
+   exports.handleTTSStream = async (ws, data) => {
+     const { text, messageId } = data;
+     
+     // 发送开始信号
+     ws.send(JSON.stringify({
+       type: 'tts_start',
+       messageId,
+       totalDuration: estimatedDuration
+     }));
+     
+     // 流式生成和推送音频块
+     await ttsProvider.streamTextToSpeech(text, {
+       onChunk: (chunk) => {
+         ws.send(JSON.stringify({
+           type: 'tts_chunk',
+           messageId,
+           data: chunk.audioBuffer,
+           timestamp: chunk.timestamp
+         }));
+       }
+     });
+     
+     // 发送结束信号
+     ws.send(JSON.stringify({
+       type: 'tts_end',
+       messageId
+     }));
+   };
+   ```
+
+2. **音频块缓存管理**
+   ```javascript
+   class TTSChunkManager {
+     constructor() {
+       this.chunks = new Map(); // messageId -> chunks[]
+       this.playingContexts = new Map();
+     }
+     
+     addChunk(messageId, chunk) {
+       if (!this.chunks.has(messageId)) {
+         this.chunks.set(messageId, []);
+       }
+       this.chunks.get(messageId).push(chunk);
+     }
+     
+     async playChunks(messageId) {
+       // 串行播放所有音频块
+     }
+   }
+   ```
+
+**Phase 2: 前端流式播放器**
+1. **WebSocket TTS监听器**
+   ```javascript
+   // frontend/pages/index/modules/streaming-audio-player.js
+   class StreamingAudioPlayer {
+     constructor(websocket) {
+       this.ws = websocket;
+       this.playingTasks = new Map();
+       this.audioQueue = new Map();
+       
+       // 监听TTS相关WebSocket消息
+       this.ws.onMessage = this.handleWebSocketMessage.bind(this);
+     }
+     
+     handleWebSocketMessage(event) {
+       const message = JSON.parse(event.data);
+       
+       switch(message.type) {
+         case 'tts_start':
+           this.initializeTTSPlayback(message.messageId);
+           break;
+         case 'tts_chunk':
+           this.queueAudioChunk(message);
+           break;
+         case 'tts_end':
+           this.finalizeTTSPlayback(message.messageId);
+           break;
+       }
+     }
+   }
+   ```
+
+2. **分块音频队列播放**
+   ```javascript
+   async queueAudioChunk(message) {
+     const { messageId, data, timestamp } = message;
+     
+     // 创建音频块
+     const audioChunk = {
+       data: data,
+       timestamp: timestamp,
+       played: false
+     };
+     
+     // 添加到播放队列
+     this.audioQueue.get(messageId).push(audioChunk);
+     
+     // 如果是第一个块，开始播放
+     if (this.audioQueue.get(messageId).length === 1) {
+       this.startSequentialPlayback(messageId);
+     }
+   }
+   ```
+
+### 方案2: 分段文本处理 (备选)
+
+**设计思路**: 将长文本分段，每段单独进行TTS处理和播放
+
+#### 技术实现
+```javascript
+class SegmentedTTSPlayer {
+  async playLongText(text, messageId) {
+    // 1. 文本智能分段（按句号、问号等分割）
+    const segments = this.splitTextIntoSegments(text);
+    
+    // 2. 逐段生成和播放TTS
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      const audioData = await this.requestTTS(segment);
+      await this.playAudioBuffer(audioData, `${messageId}_segment_${i}`);
+    }
+  }
+  
+  splitTextIntoSegments(text, maxLength = 50) {
+    // 智能分段逻辑：优先按标点分割，保证语义完整性
+    const sentences = text.split(/[。！？]/);
+    const segments = [];
+    let currentSegment = '';
+    
+    for (const sentence of sentences) {
+      if (currentSegment.length + sentence.length <= maxLength) {
+        currentSegment += sentence;
+      } else {
+        if (currentSegment) segments.push(currentSegment);
+        currentSegment = sentence;
+      }
+    }
+    if (currentSegment) segments.push(currentSegment);
+    
+    return segments;
+  }
+}
+```
+
+### 方案3: 音频格式优化 (辅助)
+
+**改进措施**:
+1. **强制使用PCM格式**: 避免MP3编码问题
+2. **音频参数优化**: 降低采样率和比特率
+3. **压缩算法调整**: 使用更兼容的编码方式
+
+```javascript
+// 优化音频参数配置
+const AUDIO_CONFIG = {
+  sampleRate: 16000,    // 降低采样率
+  bitRate: 64000,       // 降低比特率
+  channels: 1,          // 单声道
+  format: 'pcm'         // 使用PCM避免编码问题
+};
+```
+
+## 推荐实施路线
+
+### 阶段1: 快速修复 (1-2天)
+**采用方案2**: 分段文本处理
+- ✅ 实施简单，风险较低
+- ✅ 可以立即解决长文本播放问题
+- ✅ 保持现有架构不变
+
+### 阶段2: 长期优化 (1周)
+**采用方案1**: WebSocket流式播放
+- ✅ 提供最佳用户体验
+- ✅ 支持真正的流式播放
+- ✅ 可扩展性强，支持暂停/恢复等高级功能
+
+### 阶段3: 性能优化
+**结合方案3**: 音频格式和参数优化
+- ✅ 提升播放兼容性
+- ✅ 减少网络传输压力
+- ✅ 优化播放启动时间
+
+## 验收标准
+
+### 功能验证
+- [ ] 长文本(>100字)TTS完整播放无截断
+- [ ] 播放进度正确显示
+- [ ] 播放控制(暂停/恢复)正常工作
+- [ ] 多消息TTS播放互不干扰
+
+### 性能验证  
+- [ ] 首次播放延迟<3秒
+- [ ] 音频切换无明显停顿
+- [ ] 内存使用稳定，无泄漏
+- [ ] 网络异常时优雅降级
+
+### 兼容性验证
+- [ ] 微信开发者工具正常播放
+- [ ] 不同手机设备播放正常
+- [ ] 网络波动时播放稳定
+- [ ] 与现有聊天功能无冲突
+
+## 技术风险评估
+
+### 高风险
+- **WebSocket消息顺序**: 需要确保音频块按序播放
+- **内存管理**: 大量音频块缓存可能导致内存压力
+
+### 中风险  
+- **网络中断处理**: 流式播放中断时的恢复机制
+- **并发播放控制**: 多消息同时播放的冲突处理
+
+### 低风险
+- **分段播放衔接**: 段落间的自然过渡
+- **UI状态同步**: 播放状态与界面的实时同步
+
+---
+
+*本分析基于2025-08-31的实际测试发现的TTS音频截断问题，建议优先采用分段处理方案快速解决，再逐步升级到流式播放架构。*

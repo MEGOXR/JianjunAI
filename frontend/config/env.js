@@ -10,16 +10,16 @@ const currentEnv = 'local';
 const envConfig = {
   // 本地开发环境
   local: {
-    wsBaseUrl: "ws://192.168.1.13:3000",
-    baseUrl: "http://192.168.1.13:3000",
+    wsBaseUrl: "ws://192.168.1.13:9001",
+    baseUrl: "http://192.168.1.13:9001",
     name: "本地环境"
   },
   
-  // 开发/测试环境
+  // 开发/测试环境 (火山引擎ECS通过百度云代理)
   dev: {
-    wsBaseUrl: "wss://jianjunai-h6bxanc3b4e7ebcn.eastasia-01.azurewebsites.net",
-    baseUrl: "https://jianjunai-h6bxanc3b4e7ebcn.eastasia-01.azurewebsites.net",
-    name: "开发环境"
+    wsBaseUrl: "wss://mego-xr.com/aiapi/",
+    baseUrl: "https://mego-xr.com/aiapi",
+    name: "火山引擎测试环境"
   },
   
   // 生产环境

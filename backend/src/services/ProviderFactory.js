@@ -78,8 +78,8 @@ class ProviderFactory {
           language: config.language
         });
       } else if (type === 'volcengine') {
-        const VolcengineTTSProviderV3 = require('../providers/volcengine/VolcengineTTSProviderV3');
-        this.instances[key] = new VolcengineTTSProviderV3(config);
+        const VolcengineTTSProviderFinal = require('../providers/volcengine/VolcengineTTSProviderFinal');
+        this.instances[key] = new VolcengineTTSProviderFinal(config);
       } else {
         throw new Error(`Unsupported TTS provider: ${type}`);
       }

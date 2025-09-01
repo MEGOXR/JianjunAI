@@ -51,7 +51,9 @@ class ConfigService {
       speechKey: this.getEnvVar('AZURE_SPEECH_KEY'),
       speechRegion: this.getEnvVar('AZURE_SPEECH_REGION'),
       speechEndpoint: this.getEnvVar('AZURE_SPEECH_ENDPOINT'),
-      language: this.getEnvVar('AZURE_SPEECH_LANGUAGE') || 'zh-CN'
+      language: this.getEnvVar('AZURE_SPEECH_LANGUAGE') || 'zh-CN',
+      // TTS音色配置
+      ttsVoice: this.getEnvVar('AZURE_TTS_VOICE') || 'zh-CN-XiaoxiaoNeural'
     };
   }
 

@@ -10,6 +10,8 @@ const heartbeatService = require('./services/heartbeatService');
 const ErrorHandler = require('./middleware/errorHandler');
 const speechRoutes = require('./routes/speechRoutes'); // 导入语音路由
 const cleanupUtil = require('./utils/cleanup'); // 导入清理工具
+const ProviderFactory = require('./services/ProviderFactory'); // 导入Provider工厂
+const ConfigService = require('./services/ConfigService'); // 导入配置服务
 
 const app = express();
 const port = process.env.PORT || 8080;
@@ -82,6 +84,8 @@ app.get('/', (req, res) => {
   });
 });
 
+// TTS路由已在speechRoutes.js中定义，无需重复配置
+
 // 健康检查
 app.get('/health', (req, res) => {
   res.status(200).json({ 
@@ -122,10 +126,10 @@ setInterval(() => {
 // 启动时立即清理一次
 cleanupUtil.cleanupAndReport(tempDir, 60 * 60 * 1000).catch(console.error);
 
-// Azure OpenAI 连接预热
-const warmupAzureOpenAI = async () => {
+// LLM 连接预热
+const warmupLLMConnection = async () => {
   try {
-    console.log('正在预热Azure OpenAI连接...');
+    console.log('正在预热LLM连接...');
     const { AzureOpenAI } = require('openai');
     
     const client = new AzureOpenAI({
@@ -143,15 +147,15 @@ const warmupAzureOpenAI = async () => {
       temperature: 0
     });
     
-    console.log('✅ Azure OpenAI连接预热成功');
+    console.log('✅ LLM连接预热成功');
   } catch (error) {
-    console.warn('⚠️ Azure OpenAI连接预热失败（不影响正常服务）:', error.message);
+    console.warn('⚠️ LLM连接预热失败（不影响正常服务）:', error.message);
   }
 };
 
 // 服务器启动后进行预热（非阻塞）
 setTimeout(() => {
-  warmupAzureOpenAI();
+  warmupLLMConnection();
 }, 5000); // 延迟5秒启动，避免影响服务器启动速度
 
 // 配置检查端点
@@ -244,8 +248,14 @@ wss.on('connection', async (ws, req) => {
 
   // 监听消息
   ws.on('message', async (message) => {
+    // 最基础的调试：确认消息事件被触发
+    console.log('🔍 收到原始WebSocket消息，长度:', message.length, '字节');
+    
     try {
       const data = JSON.parse(message);
+      
+      // 调试：记录所有收到的消息
+      console.log('📨 WebSocket收到消息:', { type: data.type, userId: ws.userId, messageId: data.messageId });
       
       if (data.type === 'init') {
         // 客户端初始化请求，重新发送问候
@@ -300,6 +310,29 @@ wss.on('connection', async (ws, req) => {
         return;
       }
 
+      // 处理TTS流式请求
+      if (data.type === 'tts_request') {
+        console.log('🔊 开始TTS流式合成:', { text: data.text?.substring(0, 20) + '...', messageId: data.messageId });
+        await handleTTSStreamRequest(ws, data);
+        return;
+      }
+
+      // 处理前端的TTS块接收确认（用于数据验证）
+      if (data.type === 'tts_chunk_received') {
+        const { messageId, chunkIndex, validationHash, sequenceNumber, receivedTime } = data;
+        const validationData = ttsValidationData.get(messageId);
+        if (validationData) {
+          validationData.receivedConfirmations.push({
+            chunkIndex,
+            validationHash,
+            sequenceNumber,
+            receivedTime
+          });
+          console.log(`📥 前端确认: 块${chunkIndex + 1} (序号${sequenceNumber}), Hash: ${validationHash?.substring(0,8)}`);
+        }
+        return;
+      }
+
       // 只有当有 prompt 时才发送消息
       if (data.prompt) {
         // 检查速率限制（仅对聊天消息进行限制）
@@ -338,6 +371,303 @@ wss.on('connection', async (ws, req) => {
     heartbeatService.unregister(ws);
   });
 });
+
+// TTS数据验证存储
+const ttsValidationData = new Map(); // messageId -> { sentChunks, receivedConfirmations }
+
+// TTS音频块存储
+const ttsAudioStorage = new Map(); // messageId -> { chunks: [], metadata: {} }
+
+// TTS WebSocket流式处理函数
+async function handleTTSStreamRequest(ws, data) {
+  try {
+    const { text, messageId, userId } = data;
+    
+    if (!text || text.trim().length === 0) {
+      ws.send(JSON.stringify({
+        type: 'tts_error',
+        messageId,
+        error: '文本内容不能为空'
+      }));
+      return;
+    }
+
+    // 初始化验证数据
+    ttsValidationData.set(messageId, {
+      sentChunks: [],
+      receivedConfirmations: [],
+      startTime: Date.now(),
+      textLength: text.length
+    });
+
+    // 初始化音频存储
+    ttsAudioStorage.set(messageId, {
+      chunks: [],
+      metadata: {
+        messageId,
+        text,
+        userId: userId || 'websocket_user',
+        startTime: Date.now(),
+        textLength: text.length
+      }
+    });
+
+    // 获取TTS Provider
+    const ttsProvider = ProviderFactory.getTTSProvider();
+    await ttsProvider.initialize();
+
+    // 获取配置
+    const providerType = ConfigService.getProviderType();
+    const providerConfig = ConfigService.getProviderConfig(providerType);
+    const defaultVoice = providerConfig.ttsVoice;
+    const supportedFormats = ttsProvider.getSupportedFormats();
+    const audioFormat = supportedFormats.includes('mp3') ? 'mp3' : 'wav';
+
+    console.log(`🔊 WebSocket TTS开始验证 - Provider: ${providerType}, MessageID: ${messageId}, 文本长度: ${text.length}`);
+
+    // 发送开始信号
+    ws.send(JSON.stringify({
+      type: 'tts_start',
+      messageId,
+      audioFormat,
+      provider: providerType
+    }));
+
+    let chunkCount = 0;
+    const validationData = ttsValidationData.get(messageId);
+    const audioStorage = ttsAudioStorage.get(messageId);
+
+    // 使用流式TTS，接收每个音频块并立即发送
+    await ttsProvider.streamTextToSpeechReal(text, {
+      voiceType: defaultVoice,
+      userId: userId || 'websocket_user',
+      encoding: audioFormat,
+      onChunk: (chunk, chunkIndex) => {
+        chunkCount++;
+        
+        // 将音频数据编码为base64
+        const audioBase64 = chunk.audioBuffer.toString('base64');
+        
+        // 记录发送的块数据（用于验证）
+        const chunkValidationData = {
+          chunkIndex,
+          chunkSize: chunk.audioBuffer.length,
+          audioDataHash: require('crypto').createHash('md5').update(chunk.audioBuffer).digest('hex'),
+          sentTime: Date.now()
+        };
+        validationData.sentChunks.push(chunkValidationData);
+
+        // 保存音频块到存储（用于合成完整音频）
+        audioStorage.chunks.push({
+          chunkIndex,
+          sequenceNumber: chunkCount,
+          audioBuffer: chunk.audioBuffer,
+          chunkSize: chunk.audioBuffer.length,
+          audioDataHash: chunkValidationData.audioDataHash,
+          receivedTime: Date.now()
+        });
+        
+        // 立即发送音频块给前端
+        ws.send(JSON.stringify({
+          type: 'tts_chunk',
+          messageId,
+          chunkIndex,
+          audioData: audioBase64,
+          audioFormat,
+          chunkSize: chunk.audioBuffer.length,
+          // 添加验证数据
+          sequenceNumber: chunkCount,
+          validationHash: chunkValidationData.audioDataHash
+        }));
+        
+        console.log(`📤 后端发送: 块${chunkIndex + 1} (序号${chunkCount}), 大小: ${chunk.audioBuffer.length}B, Hash: ${chunkValidationData.audioDataHash.substring(0,8)}`);
+        console.log(`💾 后端保存: 块${chunkIndex + 1} 已存储，总计${audioStorage.chunks.length}块`);
+      }
+    });
+
+    // 发送完成信号
+    ws.send(JSON.stringify({
+      type: 'tts_end',
+      messageId,
+      totalChunks: chunkCount,
+      provider: providerType
+    }));
+
+    console.log(`🏁 WebSocket TTS发送完成 - MessageID: ${messageId}, 总发送: ${chunkCount} 块`);
+    
+    // 立即合成完整音频文件
+    try {
+      await mergeAndSaveTTSAudio(messageId, audioFormat);
+    } catch (error) {
+      console.error('音频合成失败:', error);
+    }
+    
+    // 10秒后进行数据验证对比
+    setTimeout(() => {
+      performTTSValidation(messageId);
+    }, 10000);
+
+  } catch (error) {
+    console.error('WebSocket TTS错误:', error);
+    
+    // 发送错误信息
+    ws.send(JSON.stringify({
+      type: 'tts_error',
+      messageId: data.messageId,
+      error: 'TTS服务异常',
+      details: error.message
+    }));
+  }
+}
+
+// TTS音频合成函数
+async function mergeAndSaveTTSAudio(messageId, audioFormat) {
+  const audioStorage = ttsAudioStorage.get(messageId);
+  if (!audioStorage || !audioStorage.chunks.length) {
+    console.warn(`⚠️  没有找到音频块数据: ${messageId}`);
+    return;
+  }
+
+  const { chunks, metadata } = audioStorage;
+  
+  console.log(`🎵 开始合成音频 - MessageID: ${messageId}`);
+  console.log(`📊 合成参数: ${chunks.length}块, 格式: ${audioFormat}, 文本: "${metadata.text.substring(0, 50)}..."`);
+
+  try {
+    // 确保audio-chunks目录存在
+    const fs = require('fs');
+    const path = require('path');
+    const audioChunksDir = path.join(__dirname, '../audio-chunks');
+    
+    if (!fs.existsSync(audioChunksDir)) {
+      fs.mkdirSync(audioChunksDir, { recursive: true });
+      console.log(`📁 创建目录: ${audioChunksDir}`);
+    }
+
+    // 按序号排序音频块
+    chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+    
+    // 合并所有音频块
+    const totalSize = chunks.reduce((sum, chunk) => sum + chunk.chunkSize, 0);
+    const mergedBuffer = Buffer.alloc(totalSize);
+    let offset = 0;
+
+    chunks.forEach((chunk, index) => {
+      chunk.audioBuffer.copy(mergedBuffer, offset);
+      offset += chunk.chunkSize;
+      if (index % 10 === 0 || index === chunks.length - 1) {
+        console.log(`🔗 合并进度: ${index + 1}/${chunks.length} (${((index + 1) / chunks.length * 100).toFixed(1)}%)`);
+      }
+    });
+
+    // 生成文件名
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const textPreview = metadata.text.substring(0, 20).replace(/[^\w\u4e00-\u9fff]/g, '');
+    const fileName = `tts_${messageId}_${timestamp}_${textPreview}.${audioFormat}`;
+    const filePath = path.join(audioChunksDir, fileName);
+
+    // 保存合并后的音频文件
+    fs.writeFileSync(filePath, mergedBuffer);
+    
+    // 生成元数据文件
+    const metadataFile = {
+      messageId: metadata.messageId,
+      text: metadata.text,
+      userId: metadata.userId,
+      startTime: metadata.startTime,
+      endTime: Date.now(),
+      textLength: metadata.textLength,
+      totalChunks: chunks.length,
+      totalSize: totalSize,
+      audioFormat: audioFormat,
+      fileName: fileName,
+      filePath: filePath,
+      chunks: chunks.map(chunk => ({
+        chunkIndex: chunk.chunkIndex,
+        sequenceNumber: chunk.sequenceNumber,
+        chunkSize: chunk.chunkSize,
+        audioDataHash: chunk.audioDataHash,
+        receivedTime: chunk.receivedTime
+      }))
+    };
+
+    const metadataPath = path.join(audioChunksDir, `${path.parse(fileName).name}_metadata.json`);
+    fs.writeFileSync(metadataPath, JSON.stringify(metadataFile, null, 2));
+
+    console.log(`✅ 音频合成完成:`);
+    console.log(`📁 文件路径: ${filePath}`);
+    console.log(`📊 文件大小: ${(totalSize / 1024).toFixed(1)} KB`);
+    console.log(`⏱️  处理时长: ${Date.now() - metadata.startTime} ms`);
+    console.log(`📄 元数据: ${metadataPath}`);
+
+    // 清理存储
+    ttsAudioStorage.delete(messageId);
+
+  } catch (error) {
+    console.error(`❌ 音频合成失败 - MessageID: ${messageId}:`, error);
+    throw error;
+  }
+}
+
+// TTS数据验证对比函数
+function performTTSValidation(messageId) {
+  const validationData = ttsValidationData.get(messageId);
+  if (!validationData) {
+    console.log(`⚠️  验证数据不存在: ${messageId}`);
+    return;
+  }
+
+  const { sentChunks, receivedConfirmations, startTime, textLength } = validationData;
+  
+  console.log(`\n🔍 TTS数据验证报告 - MessageID: ${messageId}`);
+  console.log('=' .repeat(60));
+  console.log(`📊 基础数据:`);
+  console.log(`• 文本长度: ${textLength} 字符`);
+  console.log(`• 后端发送: ${sentChunks.length} 块`);
+  console.log(`• 前端确认: ${receivedConfirmations.length} 块`);
+  console.log(`• 数据完整性: ${receivedConfirmations.length}/${sentChunks.length} (${(receivedConfirmations.length/sentChunks.length*100).toFixed(1)}%)`);
+  
+  // 检查缺失的块
+  const sentIndices = new Set(sentChunks.map(c => c.chunkIndex));
+  const receivedIndices = new Set(receivedConfirmations.map(c => c.chunkIndex));
+  
+  const missingChunks = [...sentIndices].filter(index => !receivedIndices.has(index));
+  const duplicateChunks = receivedConfirmations.filter((item, index, arr) => 
+    arr.findIndex(other => other.chunkIndex === item.chunkIndex) !== index
+  );
+
+  if (missingChunks.length > 0) {
+    console.log(`❌ 缺失块 (${missingChunks.length}个): ${missingChunks.join(', ')}`);
+  }
+  
+  if (duplicateChunks.length > 0) {
+    console.log(`⚠️  重复块 (${duplicateChunks.length}个): ${duplicateChunks.map(c => c.chunkIndex).join(', ')}`);
+  }
+  
+  if (missingChunks.length === 0 && duplicateChunks.length === 0) {
+    console.log(`✅ 数据传输完整，无缺失或重复`);
+  }
+
+  // 数据哈希验证
+  let hashMismatch = 0;
+  receivedConfirmations.forEach(received => {
+    const sent = sentChunks.find(s => s.chunkIndex === received.chunkIndex);
+    if (sent && sent.audioDataHash !== received.validationHash) {
+      hashMismatch++;
+    }
+  });
+  
+  if (hashMismatch > 0) {
+    console.log(`❌ 数据损坏: ${hashMismatch} 块哈希不匹配`);
+  } else {
+    console.log(`✅ 数据完整性验证通过`);
+  }
+  
+  console.log('=' .repeat(60));
+  
+  // 清理验证数据
+  ttsValidationData.delete(messageId);
+}
 
 // 优雅关闭处理
 process.on('SIGTERM', () => {

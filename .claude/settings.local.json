@@ -35,7 +35,13 @@
       "Bash(npx:*)",
       "Bash(claude mcp:*)",
       "Bash(find:*)",
-      "Bash(del nul)"
+      "Bash(del nul)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "WebFetch(domain:www.volcengine.com)",
+      "Bash(ssh:*)",
+      "Bash(tar:*)",
+      "Bash(dir:*)"
     ],
     "deny": []
   }

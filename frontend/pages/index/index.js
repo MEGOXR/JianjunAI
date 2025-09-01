@@ -5,6 +5,7 @@ const StreamingSpeechManager = require('./modules/streaming-speech.js');
 const MessageManager = require('./modules/message-manager.js');
 const ScrollController = require('./modules/scroll-controller.js');
 const UIStateManager = require('./modules/ui-state-manager.js');
+const TTSManager = require('./modules/tts-manager.js'); // 新增TTS模块
 
 Page({
   // 核心数据状态 - 只保留UI渲染必需的数据
@@ -31,7 +32,10 @@ Page({
     keyboardHeight: 0,
     
     // 流式语音识别状态
-    isStreamingSpeech: false
+    isStreamingSpeech: false,
+    
+    // TTS相关状态
+    autoTTS: true // 自动朗读AI回复
   },
 
   onLoad: function() {
@@ -39,16 +43,20 @@ Page({
     this.userId = null;
     this.authToken = null;
     
-    // 初始化所有模块
+    // 初始化所有模块（包括新的TTS模块）
     this.webSocketManager = new WebSocketManager(this);
     this.voiceRecorder = new VoiceRecorder(this);
     this.streamingSpeechManager = new StreamingSpeechManager(this);
     this.messageManager = new MessageManager(this);
     this.scrollController = new ScrollController(this);
     this.uiStateManager = new UIStateManager(this);
+    this.ttsManager = new TTSManager(this); // 新增TTS管理器
     
     // 初始化页面
     this.uiStateManager.initialize();
+    
+    // 初始化TTS（新增）
+    this.ttsManager.initialize();
   },
 
   // ==================== 认证方法 ====================
@@ -248,5 +256,38 @@ Page({
 
   flushStream: function() {
     this.messageManager.flushStream();
+  },
+  
+  // ==================== TTS 方法（新增） ====================
+  
+  /**
+   * 复制消息内容
+   */
+  copyMessage: function(e) {
+    const content = e.currentTarget.dataset.content;
+    this.ttsManager.copyMessage(content);
+  },
+
+  /**
+   * 切换TTS播放状态
+   */
+  toggleTTS: function(e) {
+    const messageId = e.currentTarget.dataset.messageId;
+    this.ttsManager.toggleTTS(messageId);
+  },
+
+  /**
+   * AI消息点击处理（取消朗读）
+   */
+  onAIMessageTap: function(e) {
+    const messageId = e.currentTarget.dataset.messageId;
+    this.ttsManager.onAIMessageTap(messageId);
+  },
+
+  /**
+   * AI回复完成后的处理（需要在MessageManager中调用）
+   */
+  onAIResponseComplete: function(message) {
+    this.ttsManager.onAIResponseComplete(message);
   }
 });

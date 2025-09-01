@@ -6,16 +6,12 @@ const promptService = require('../services/promptService');
 const suggestionService = require('../services/suggestionService');
 const ErrorHandler = require('../middleware/errorHandler');
 
-// Provider支持
-const ConfigService = require('../services/ConfigService');
-const ProviderFactory = require('../services/ProviderFactory');
-
 // 环境变量读取辅助函数（处理 Azure App Service 的 APPSETTING_ 前缀）
 function getEnvVar(name) {
   return process.env[name] || process.env[`APPSETTING_${name}`] || null;
 }
 
-// 从环境变量中获取 LLM 配置
+// 从环境变量中获取 Azure OpenAI 配置
 const endpoint = getEnvVar('AZURE_OPENAI_ENDPOINT');
 const apiKey = getEnvVar('AZURE_OPENAI_API_KEY');
 const apiVersion = getEnvVar('OPENAI_API_VERSION');
@@ -24,12 +20,12 @@ const deployment = getEnvVar('AZURE_OPENAI_DEPLOYMENT_NAME');
 // 验证配置的函数（延迟到实际使用时检查）
 function validateAzureConfig() {
   if (!endpoint || !apiKey || !apiVersion || !deployment) {
-    console.error('LLM configuration missing. Please check environment variables.');
+    console.error('Azure OpenAI configuration missing. Please check environment variables.');
     console.error(`Endpoint: ${endpoint ? '已设置' : '未设置'}`);
     console.error(`API Key: ${apiKey ? '已设置' : '未设置'}`);
     console.error(`API Version: ${apiVersion ? '已设置' : '未设置'}`);
     console.error(`Deployment: ${deployment ? '已设置' : '未设置'}`);
-    throw new Error('LLM credentials not configured');
+    throw new Error('Azure OpenAI credentials not configured');
   }
 }
 
@@ -152,18 +148,10 @@ const getUserId = (ws) => {
 exports.sendMessage = async (ws, prompt) => {
   console.log('收到消息:', { prompt, userId: ws.userId });
   
-  // 检查是否启用Provider模式（移到try外面，确保在catch中也能访问）
-  const useProvider = ConfigService.isProviderEnabled();
-  
   try {
-    
-    if (useProvider) {
-      console.log(`使用 ${ConfigService.getProviderType()} Provider`);
-    } else {
-      // 验证Azure配置
-      validateAzureConfig();
-      console.log('Azure配置验证通过');
-    }
+    // 验证Azure配置
+    validateAzureConfig();
+    console.log('Azure配置验证通过');
     
     const userId = getUserId(ws);
     console.log('用户ID:', userId);
@@ -280,55 +268,36 @@ exports.sendMessage = async (ws, prompt) => {
       history: history 
     }));
 
+    // 创建 Azure OpenAI 客户端实例
+    const client = new AzureOpenAI({
+      apiKey,
+      endpoint,
+      apiVersion,
+      deployment,
+    });
+
     // 最终验证 history 是数组
     if (!Array.isArray(history)) {
       console.error('history不是数组！类型:', typeof history, '内容:', history);
       throw new Error('History must be an array');
     }
     
-    console.log('准备调用LLM，历史消息数:', history.length);
+    console.log('准备调用Azure OpenAI，历史消息数:', history.length);
+    console.log('部署名称:', deployment);
     console.log('history数组示例:', history.slice(0, 2));
     
-    let stream;
+    const stream = await client.chat.completions.create({
+      model: deployment,  // 使用环境变量中的部署名称
+      messages: history,
+      stream: true,
+      max_tokens: 2000,     // 保持合理的token限制
+      temperature: 0.5,
+      presence_penalty: 0.1,
+      frequency_penalty: 0.2,
+      stop: null  // 让 AI 自然地完成回答
+    });
     
-    if (useProvider) {
-      // 使用Provider模式
-      const llmProvider = ProviderFactory.getLLMProvider();
-      await llmProvider.initialize();
-      
-      console.log(`调用 ${llmProvider.getName()}，模型:`, llmProvider.getModelInfo());
-      
-      stream = await llmProvider.createChatStream(history, {
-        maxTokens: 2000,
-        temperature: 0.5,
-        presencePenalty: 0.1,
-        frequencyPenalty: 0.2,
-        stop: null
-      });
-    } else {
-      // 原始Azure模式
-      const client = new AzureOpenAI({
-        apiKey,
-        endpoint,
-        apiVersion,
-        deployment,
-      });
-      
-      console.log('准备调用LLM，部署名称:', deployment);
-      
-      stream = await client.chat.completions.create({
-        model: deployment,  // 使用环境变量中的部署名称
-        messages: history,
-        stream: true,
-        max_tokens: 2000,     // 保持合理的token限制
-        temperature: 0.5,
-        presence_penalty: 0.1,
-        frequency_penalty: 0.2,
-        stop: null  // 让 AI 自然地完成回答
-      });
-    }
-    
-    console.log('LLM流创建成功');
+    console.log('Azure OpenAI流创建成功');
 
     let assistantResponse = '';
 
@@ -444,9 +413,8 @@ exports.sendMessage = async (ws, prompt) => {
     // 后台生成建议问题（优先使用预热数据）
     generateSuggestionsAsync();
   } catch (error) {
-    const providerName = useProvider ? ConfigService.getProviderType() : 'LLM';
-    console.error(`${providerName} LLM 调用出错:`, error);
-    ErrorHandler.handleWebSocketError(ws, error, `${providerName} Chat`);
+    console.error("Azure OpenAI 调用出错:", error);
+    ErrorHandler.handleWebSocketError(ws, error, 'Azure OpenAI Chat');
     
     // 检查是否是内容过滤错误
     if (error.code === 'content_filter' || error.message?.includes('content management policy')) {
