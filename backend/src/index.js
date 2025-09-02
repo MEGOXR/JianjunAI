@@ -39,6 +39,7 @@ console.log(`- AZURE_OPENAI_API_KEY: ${azureApiKey ? '已设置' : '未设置'}`
 console.log(`- OPENAI_API_VERSION: ${azureApiVersion || '未设置'}`);
 console.log(`- AZURE_OPENAI_DEPLOYMENT_NAME: ${azureDeployment || '未设置'}`);
 console.log('=== 其他环境变量 ===');
+console.log(`- JWT_SECRET: ${process.env.JWT_SECRET ? '已设置 (前10字符: ' + process.env.JWT_SECRET.substring(0, 10) + '...)' : '未设置'}`);
 console.log(`- WEBSITE_HOSTNAME: ${process.env.WEBSITE_HOSTNAME || '未设置'}`);
 console.log(`- WEBSITE_SITE_NAME: ${process.env.WEBSITE_SITE_NAME || '未设置'}`);
 console.log('========================');
@@ -129,19 +130,12 @@ cleanupUtil.cleanupAndReport(tempDir, 60 * 60 * 1000).catch(console.error);
 const warmupLLMConnection = async () => {
   try {
     console.log('正在预热LLM连接...');
-    const { AzureOpenAI } = require('openai');
+    const ProviderFactory = require('./services/ProviderFactory');
     
-    const client = new AzureOpenAI({
-      apiKey: azureApiKey,
-      endpoint: azureEndpoint,
-      apiVersion: azureApiVersion,
-      deployment: azureDeployment,
-    });
+    const provider = ProviderFactory.getLLMProvider();
     
     // 发送一个简单的请求来预热连接
-    const response = await client.chat.completions.create({
-      model: azureDeployment,
-      messages: [{ role: 'user', content: '测试连接' }],
+    const response = await provider.createCompletion('测试连接', {
       max_tokens: 5,
       temperature: 0
     });

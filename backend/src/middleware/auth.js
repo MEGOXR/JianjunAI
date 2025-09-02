@@ -8,14 +8,21 @@ class AuthMiddleware {
    * Generate JWT token for user
    */
   static generateToken(userId) {
-    return jwt.sign(
-      { 
-        userId, 
-        timestamp: Date.now() 
-      },
-      this.JWT_SECRET,
-      { expiresIn: this.TOKEN_EXPIRY }
-    );
+    const payload = { 
+      userId, 
+      timestamp: Date.now() 
+    };
+    
+    console.log('🔑 生成JWT Token:');
+    console.log('  UserId:', userId);
+    console.log('  Payload:', payload);
+    console.log('  JWT_SECRET (前20字符):', this.JWT_SECRET.substring(0, 20) + '...');
+    
+    const token = jwt.sign(payload, this.JWT_SECRET, { expiresIn: this.TOKEN_EXPIRY });
+    
+    console.log('✅ Token生成成功 (前50字符):', token.substring(0, 50) + '...');
+    
+    return token;
   }
 
   /**
@@ -23,9 +30,25 @@ class AuthMiddleware {
    */
   static verifyToken(token) {
     try {
-      return jwt.verify(token, this.JWT_SECRET);
+      console.log('🔐 JWT验证开始:');
+      console.log('  Token (前50字符):', token.substring(0, 50) + '...');
+      console.log('  JWT_SECRET (前20字符):', this.JWT_SECRET.substring(0, 20) + '...');
+      
+      const decoded = jwt.verify(token, this.JWT_SECRET);
+      console.log('✅ JWT验证成功:', {
+        userId: decoded.userId,
+        timestamp: decoded.timestamp,
+        exp: decoded.exp,
+        iat: decoded.iat
+      });
+      return decoded;
     } catch (error) {
-      console.error('JWT verification failed:', error.message);
+      console.error('❌ JWT verification failed:', {
+        message: error.message,
+        name: error.name,
+        tokenPreview: token.substring(0, 50) + '...',
+        secretPreview: this.JWT_SECRET.substring(0, 20) + '...'
+      });
       return null;
     }
   }

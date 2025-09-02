@@ -344,8 +344,8 @@ exports.sendMessage = async (ws, prompt) => {
           .replace(/\*([^*]+)\*/g, '$1')             // 斜体
           .replace(/#{1,6}\s*/g, '')                 // 标题
           .replace(/^\s*[-*+]\s+/gm, '• ')          // 列表
-          .replace(/`([^`]+)`/g, '「$1」')           // 行内代码
-          .replace(/[#*_`~]/g, '');                  // 移除残留符号
+          .replace(/`([^`]+)`/g, '「$1」');          // 行内代码
+          // 移除单独的Markdown符号，但保留正常标点符号
         ws.send(JSON.stringify({ data: cleanedContent }));
         console.log('发送消息片段，长度:', cleanedContent.length);
       }

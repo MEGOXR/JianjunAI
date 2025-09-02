@@ -1,39 +1,18 @@
-const { AzureOpenAI } = require("openai");
-
-// 环境变量读取辅助函数
-function getEnvVar(name) {
-  return process.env[name] || process.env[`APPSETTING_${name}`] || null;
-}
-
-// Azure OpenAI 配置
-const endpoint = getEnvVar('AZURE_OPENAI_ENDPOINT');
-const apiKey = getEnvVar('AZURE_OPENAI_API_KEY');
-const apiVersion = getEnvVar('OPENAI_API_VERSION');
-const deployment = getEnvVar('AZURE_OPENAI_DEPLOYMENT_NAME');
+const ProviderFactory = require('./ProviderFactory');
 
 class SuggestionService {
   constructor() {
-    this.client = null;
-    this.initClient();
+    this.provider = null;
+    this.initProvider();
   }
 
-  initClient() {
+  initProvider() {
     try {
-      if (!endpoint || !apiKey || !apiVersion || !deployment) {
-        console.warn('Azure OpenAI配置不完整，建议问题功能将被禁用');
-        return;
-      }
-      
-      this.client = new AzureOpenAI({
-        apiKey,
-        endpoint,
-        apiVersion,
-        deployment,
-      });
-      
+      this.provider = ProviderFactory.getLLMProvider();
       console.log('建议问题服务初始化成功');
     } catch (error) {
       console.error('建议问题服务初始化失败:', error);
+      this.provider = null;
     }
   }
 
@@ -44,8 +23,8 @@ class SuggestionService {
    * @returns {Array} 建议问题数组
    */
   async generateSuggestions(conversationHistory, lastResponse) {
-    if (!this.client) {
-      console.log('Azure OpenAI客户端未初始化，跳过建议问题生成');
+    if (!this.provider) {
+      console.log('LLM Provider未初始化，跳过建议问题生成');
       return [];
     }
 
@@ -59,16 +38,14 @@ class SuggestionService {
       const prompt = this.buildSuggestionPrompt(conversationHistory, lastResponse);
       console.log('生成建议问题的提示词:', prompt.substring(0, 200) + '...');
       
-      const response = await this.client.chat.completions.create({
-        model: deployment,
-        messages: [{ role: "user", content: prompt }],
+      const response = await this.provider.createCompletion(prompt, {
         max_tokens: 300,
         temperature: 0.3, // 降低随机性，提高一致性
         presence_penalty: 0.1,
         frequency_penalty: 0.1
       });
       
-      const content = response.choices[0].message.content.trim();
+      const content = response.trim();
       console.log('LLM返回的建议问题内容:', content);
       
       // 尝试解析JSON
