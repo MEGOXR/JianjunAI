@@ -41,7 +41,8 @@
       "WebFetch(domain:www.volcengine.com)",
       "Bash(ssh:*)",
       "Bash(tar:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "deny": []
   }

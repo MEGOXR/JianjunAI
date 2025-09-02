@@ -1,0 +1,69 @@
+name: Deploy to Volcengine ECS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Deploy to ECS
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+          host: ${{ secrets.VOLCENGINE_ECS_IP }}
+          username: ${{ secrets.VOLCENGINE_ECS_USER }}
+          key: ${{ secrets.VOLCENGINE_SSH_KEY }}
+          script: |
+            cd /var/www/jianjunai
+            git pull origin main
+            cd backend
+            cat > .env.volcengine << 'EOF'
+            PORT=8000
+            
+            # Azure配置（保持现有，用于对比测试）
+            AZURE_OPENAI_ENDPOINT=${{ secrets.AZURE_OPENAI_ENDPOINT }}
+            AZURE_OPENAI_API_KEY=${{ secrets.AZURE_OPENAI_API_KEY }}
+            AZURE_OPENAI_DEPLOYMENT_NAME=${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+            OPENAI_API_VERSION=2024-08-01-preview
+            AZURE_SPEECH_KEY=${{ secrets.AZURE_SPEECH_KEY }}
+            AZURE_SPEECH_REGION=koreacentral
+            AZURE_SPEECH_ENDPOINT=https://koreacentral.api.cognitive.microsoft.com/
+            AZURE_SPEECH_LANGUAGE=zh-CN
+            
+            # Azure TTS音色配置
+            AZURE_TTS_VOICE=zh-CN-XiaoxiaoNeural
+            
+            # Provider选择（使用火山引擎）
+            PROVIDER_TYPE=volcengine
+            USE_PROVIDER=true
+            
+            # 火山引擎基础认证
+            VOLCENGINE_ACCESS_KEY=${{ secrets.VOLCENGINE_ACCESS_KEY }}
+            VOLCENGINE_SECRET_KEY=${{ secrets.VOLCENGINE_SECRET_KEY }}
+            VOLCENGINE_REGION=cn-north-1
+            
+            # 火山引擎豆包大模型（兼容OpenAI SDK）
+            ARK_API_KEY=${{ secrets.ARK_API_KEY }}
+            VOLCENGINE_ARK_API_KEY=${{ secrets.VOLCENGINE_ARK_API_KEY }}
+            VOLCENGINE_ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+            
+            # 豆包模型配置
+            VOLCENGINE_ARK_MODEL=${{ secrets.VOLCENGINE_ARK_MODEL }}
+            VOLCENGINE_ARK_MODEL_FLASH=${{ secrets.VOLCENGINE_ARK_MODEL_FLASH }}
+            VOLCENGINE_MODEL_TYPE=standard
+            
+            # 火山引擎语音服务
+            VOLCENGINE_SPEECH_APP_ID=${{ secrets.VOLCENGINE_SPEECH_APP_ID }}
+            VOLCENGINE_ASR_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
+            
+            # 语音服务统一认证（ASR和TTS共用）
+            VOLCENGINE_SPEECH_ACCESS_TOKEN=${{ secrets.VOLCENGINE_SPEECH_ACCESS_TOKEN }}
+            VOLCENGINE_SPEECH_SECRET_KEY=${{ secrets.VOLCENGINE_SPEECH_SECRET_KEY }}
+            EOF
+            npm install --production
+            pm2 restart jianjunai || pm2 start src/index.js --name jianjunai --env-file .env.volcengine

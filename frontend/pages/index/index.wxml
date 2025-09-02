@@ -138,7 +138,8 @@
 
   <!-- 底部录音界面 -->
   <view class="voice-recording-overlay" wx:if="{{showVoiceModal}}">
-    <view class="voice-recording-container {{isRecordingCanceling ? 'canceling' : ''}}">
+    <view class="voice-recording-container {{isRecordingCanceling ? 'canceling' : ''}}" 
+          style="--volume-scale: {{1 + currentVolume * 0.003}}; --volume-glow: {{currentVolume}}">
       <!-- 录音提示信息 - 在波形上方 -->
       <view class="recording-tips">
         <text class="recording-duration">{{recordingDuration}}s</text>

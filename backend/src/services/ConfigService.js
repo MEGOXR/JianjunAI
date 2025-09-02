@@ -47,13 +47,12 @@ class ConfigService {
       apiVersion: this.getEnvVar('OPENAI_API_VERSION'),
       deployment: this.getEnvVar('AZURE_OPENAI_DEPLOYMENT_NAME'),
       
-      // 语音配置
+      // 语音服务配置
       speechKey: this.getEnvVar('AZURE_SPEECH_KEY'),
-      speechRegion: this.getEnvVar('AZURE_SPEECH_REGION'),
+      speechRegion: this.getEnvVar('AZURE_SPEECH_REGION') || 'koreacentral',
       speechEndpoint: this.getEnvVar('AZURE_SPEECH_ENDPOINT'),
       language: this.getEnvVar('AZURE_SPEECH_LANGUAGE') || 'zh-CN',
-      // TTS音色配置
-      ttsVoice: this.getEnvVar('AZURE_TTS_VOICE') || 'zh-CN-XiaoxiaoNeural'
+      ttsVoice: this.getEnvVar('AZURE_TTS_VOICE') || 'zh-CN-XiaoxiaoNeural',
     };
   }
 
@@ -82,19 +81,14 @@ class ConfigService {
       modelType: modelType,
       baseURL: this.getEnvVar('VOLCENGINE_ARK_BASE_URL') || 'https://ark.cn-beijing.volces.com/api/v3',
       
-      // 语音配置
+      // 语音服务配置
       speechAppId: this.getEnvVar('VOLCENGINE_SPEECH_APP_ID'),
-      asrEndpoint: this.getEnvVar('VOLCENGINE_ASR_ENDPOINT') || 'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel',
-      ttsEndpoint: this.getEnvVar('VOLCENGINE_TTS_ENDPOINT') || 'https://openspeech.bytedance.com/api/v1/tts',
-      
-      // 语音服务统一认证（ASR和TTS共用）
       speechAccessToken: this.getEnvVar('VOLCENGINE_SPEECH_ACCESS_TOKEN'),
       speechSecretKey: this.getEnvVar('VOLCENGINE_SPEECH_SECRET_KEY'),
-      
-      // TTS资源ID配置
+      asrEndpoint: this.getEnvVar('VOLCENGINE_ASR_ENDPOINT'),
+      ttsWebsocketUrl: this.getEnvVar('VOLCENGINE_TTS_WEBSOCKET_URL'),
       ttsResourceId: this.getEnvVar('VOLCENGINE_TTS_RESOURCE_ID'),
-      // TTS音色配置
-      ttsVoice: this.getEnvVar('VOLCENGINE_TTS_VOICE')
+      ttsVoice: this.getEnvVar('VOLCENGINE_TTS_VOICE'),
     };
   }
 
@@ -159,15 +153,12 @@ class ConfigService {
    */
   static validateAzureConfig(config) {
     const llmValid = !!(config.apiKey && config.endpoint && config.apiVersion && config.deployment);
-    const speechValid = !!(config.speechKey && config.speechRegion);
     
     return {
       llm: llmValid,
-      speech: speechValid,
-      overall: llmValid && speechValid,
+      overall: llmValid,
       missing: this.getMissingFields(config, [
-        'apiKey', 'endpoint', 'apiVersion', 'deployment',
-        'speechKey', 'speechRegion'
+        'apiKey', 'endpoint', 'apiVersion', 'deployment'
       ])
     };
   }
@@ -177,15 +168,12 @@ class ConfigService {
    */
   static validateVolcengineConfig(config) {
     const llmValid = !!(config.apiKey && config.model && config.baseURL);
-    const speechValid = !!(config.speechAppId && config.speechAccessToken && config.speechSecretKey);
     
     return {
       llm: llmValid,
-      speech: speechValid,
-      overall: llmValid && speechValid,
+      overall: llmValid,
       missing: this.getMissingFields(config, [
-        'apiKey', 'model', 'baseURL',
-        'speechAppId', 'speechAccessToken', 'speechSecretKey'
+        'apiKey', 'model', 'baseURL'
       ])
     };
   }
@@ -213,7 +201,6 @@ class ConfigService {
       const validation = this.validateConfig(providerType, config);
       
       console.log(`LLM Config: ${validation.llm ? '✓' : '✗'}`);
-      console.log(`Speech Config: ${validation.speech ? '✓' : '✗'}`);
       
       if (validation.missing.length > 0) {
         console.log(`Missing fields: ${validation.missing.join(', ')}`);

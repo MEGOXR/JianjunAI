@@ -1,5 +1,6 @@
-const speechService = require('../services/speechService');
+const ProviderFactory = require('../services/ProviderFactory');
 const userDataService = require('../services/userDataService');
+const fs = require('fs').promises;
 
 class SpeechController {
   /**
@@ -30,14 +31,16 @@ class SpeechController {
         path: req.file.path
       });
 
-      // 获取音频时长
-      const duration = await speechService.getAudioDuration(req.file.path);
+      // 获取ASR Provider
+      const asrProvider = ProviderFactory.getASRProvider();
       
-      // 验证音频时长（1-60秒）
-      if (duration < 1) {
+      // 简单的音频文件大小检查（代替时长检查）
+      const stats = await fs.stat(req.file.path);
+      const fileSizeMB = stats.size / (1024 * 1024);
+      
+      if (stats.size < 1000) {
         // 清理文件
         try {
-          const fs = require('fs').promises;
           await fs.unlink(req.file.path);
         } catch (err) {
           console.error('清理文件失败:', err);
@@ -49,10 +52,9 @@ class SpeechController {
         });
       }
       
-      if (duration > 60) {
+      if (fileSizeMB > 10) { // 10MB限制
         // 清理文件
         try {
-          const fs = require('fs').promises;
           await fs.unlink(req.file.path);
         } catch (err) {
           console.error('清理文件失败:', err);
@@ -60,13 +62,13 @@ class SpeechController {
         
         return res.status(400).json({
           success: false,
-          error: '录音时间太长，请不要超过60秒'
+          error: '音频文件太大，请不要超过10MB'
         });
       }
 
       // 执行语音识别
       const startTime = Date.now();
-      const result = await speechService.speechToText(req.file.path);
+      const result = await asrProvider.speechToText(req.file.path);
       const processingTime = Date.now() - startTime;
       
       console.log(`[STT] 处理完成，耗时: ${processingTime}ms`);
@@ -95,7 +97,7 @@ class SpeechController {
         success: result.success,
         text: result.text || '',
         confidence: result.confidence || 0,
-        duration: duration,
+        duration: result.duration || 0,
         language: result.language,
         error: result.error,
         isSimulated: result.isSimulated // 开发阶段标记
@@ -107,7 +109,6 @@ class SpeechController {
       // 尝试清理文件
       if (req.file && req.file.path) {
         try {
-          const fs = require('fs').promises;
           await fs.unlink(req.file.path);
         } catch (err) {
           console.error('清理文件失败:', err);
@@ -141,18 +142,27 @@ class SpeechController {
    * 获取语音服务状态
    */
   async getServiceStatus(req, res) {
-    const isConfigured = !!process.env.AZURE_SPEECH_KEY;
-    
-    res.json({
-      available: true, // 始终可用（使用模拟或真实服务）
-      configured: isConfigured,
-      language: process.env.AZURE_SPEECH_LANGUAGE || 'zh-CN',
-      region: process.env.AZURE_SPEECH_REGION || 'eastasia',
-      maxDuration: 60,
-      minDuration: 1,
-      supportedFormats: ['mp3', 'wav', 'm4a', 'webm'],
-      isSimulated: !isConfigured // 标记是否使用模拟服务
-    });
+    try {
+      const healthStatus = await ProviderFactory.getHealthStatus();
+      const asrStatus = healthStatus.services.asr;
+      
+      res.json({
+        available: asrStatus.status === 'healthy',
+        provider: healthStatus.provider,
+        configured: asrStatus.status === 'healthy',
+        language: 'zh-CN',
+        maxDuration: 60,
+        minDuration: 1,
+        supportedFormats: ['mp3', 'wav', 'm4a', 'webm', 'pcm'],
+        status: asrStatus
+      });
+    } catch (error) {
+      console.error('获取语音服务状态失败:', error);
+      res.status(500).json({
+        available: false,
+        error: '服务状态检查失败'
+      });
+    }
   }
 }
 

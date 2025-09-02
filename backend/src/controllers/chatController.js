@@ -468,14 +468,27 @@ exports.sendMessage = async (ws, prompt) => {
 
 
 // 增强的断开连接处理
-exports.handleDisconnect = (ws) => {
+exports.handleDisconnect = async (ws) => {
   const userId = ws.userId;
   
   // 清理正在进行的语音识别会话
   try {
-    const speechService = require('../services/speechService');
-    speechService.cleanup();
-    console.log('清理语音识别会话完成');
+    console.log('🧹 开始清理所有语音识别会话，当前会话数:', global.asrSessions ? global.asrSessions.size : 0);
+    
+    if (global.asrSessions && global.asrSessions.size > 0) {
+      const ProviderFactory = require('../services/ProviderFactory');
+      const asrProvider = ProviderFactory.getASRProvider();
+      
+      for (const [sessionId] of global.asrSessions) {
+        try {
+          await asrProvider.cancelStreamingRecognition(sessionId);
+        } catch (error) {
+          console.error(`清理ASR会话 ${sessionId} 失败:`, error.message);
+        }
+      }
+      global.asrSessions.clear();
+    }
+    console.log('✅ 语音识别会话清理完成');
   } catch (error) {
     console.error('清理语音识别会话失败:', error);
   }
@@ -575,9 +588,63 @@ exports.handleStreamingSpeechStart = async (ws, data) => {
     
     console.log(`🎤 [${sessionId}] 开始流式语音识别，配置:`, config);
     
-    // 初始化语音识别会话
-    const speechService = require('../services/speechService');
-    await speechService.startStreamingRecognition(ws, sessionId, config);
+    // 根据配置获取ASR Provider
+    const ProviderFactory = require('../services/ProviderFactory');
+    const ConfigService = require('../services/ConfigService');
+    const providerType = ConfigService.getProviderType();
+    
+    console.log(`使用 ${providerType} ASR Provider`);
+    
+    const asrProvider = ProviderFactory.getASRProvider();
+    
+    if (!asrProvider) {
+      throw new Error('ASR服务未配置');
+    }
+    
+    // 初始化Provider
+    await asrProvider.initialize();
+    
+    // 启动流式识别
+    const session = await asrProvider.startStreamingRecognition(sessionId, {
+      onResult: (result) => {
+        ws.send(JSON.stringify({
+          type: 'speech_result',
+          sessionId: sessionId,
+          resultType: 'partial',
+          text: result.text,
+          confidence: result.confidence
+        }));
+      },
+      onFinal: (result) => {
+        ws.send(JSON.stringify({
+          type: 'speech_result',
+          sessionId: sessionId,
+          resultType: 'final',
+          text: result.text,
+          confidence: result.confidence
+        }));
+      },
+      onError: (error) => {
+        ws.send(JSON.stringify({
+          type: 'speech_result',
+          sessionId: sessionId,
+          resultType: 'error',
+          error: error.message
+        }));
+      },
+      onStateChange: (state) => {
+        console.log(`ASR会话状态变化 [${sessionId}]: ${state}`);
+      }
+    });
+    
+    // 保存会话到全局映射
+    if (!global.asrSessions) {
+      global.asrSessions = new Map();
+    }
+    global.asrSessions.set(sessionId, session);
+    
+    console.log(`✅ ASR会话已保存到global.asrSessions: ${sessionId}`);
+    console.log(`当前global会话数: ${global.asrSessions.size}`);
     
   } catch (error) {
     console.error('处理语音识别开始错误:', error);
@@ -585,7 +652,7 @@ exports.handleStreamingSpeechStart = async (ws, data) => {
       type: 'speech_result',
       sessionId: data.sessionId,
       resultType: 'error',
-      error: '启动语音识别失败'
+      error: error.message || '启动语音识别失败'
     }));
   }
 };
@@ -601,12 +668,36 @@ exports.handleStreamingSpeechFrame = async (ws, data) => {
       return;
     }
     
-    // 将Base64音频数据转换为Buffer
-    const audioBuffer = Buffer.from(audio, 'base64');
+    // 从全局映射获取会话
+    const session = global.asrSessions?.get(sessionId);
+    if (!session) {
+      console.warn(`❌ ASR会话 ${sessionId} 不存在于global.asrSessions`);
+      return;
+    }
     
-    // 发送音频帧到语音识别服务
-    const speechService = require('../services/speechService');
-    await speechService.processAudioFrame(sessionId, audioBuffer);
+    // 根据配置获取ASR Provider
+    const ProviderFactory = require('../services/ProviderFactory');
+    const asrProvider = ProviderFactory.getASRProvider();
+    
+    // 检查Provider内部会话状态
+    const providerSession = asrProvider.sessions?.get(sessionId);
+    if (!providerSession) {
+      console.warn(`❌ ASR会话 ${sessionId} 不存在于Provider内部sessions，清理global映射`);
+      global.asrSessions.delete(sessionId);
+      return;
+    }
+    
+    if (providerSession.state !== 'connected') {
+      console.warn(`❌ ASR会话 ${sessionId} 状态异常: ${providerSession.state}，清理会话`);
+      global.asrSessions.delete(sessionId);
+      asrProvider.sessions.delete(sessionId);
+      return;
+    }
+    
+    // 将Base64音频数据转换为Buffer并处理
+    const audioBuffer = Buffer.from(audio, 'base64');
+    console.log(`🎵 处理音频帧: ${sessionId}, 数据大小: ${audioBuffer.length}`);
+    await asrProvider.processAudioFrame(sessionId, audioBuffer);
     
   } catch (error) {
     console.error('处理语音帧错误:', error);
@@ -627,9 +718,17 @@ exports.handleStreamingSpeechEnd = async (ws, data) => {
     
     console.log(`🛑 [${sessionId}] 结束流式语音识别`);
     
+    // 根据配置获取ASR Provider
+    const ProviderFactory = require('../services/ProviderFactory');
+    const asrProvider = ProviderFactory.getASRProvider();
+    
     // 结束语音识别会话
-    const speechService = require('../services/speechService');
-    await speechService.endStreamingRecognition(sessionId);
+    await asrProvider.endStreamingRecognition(sessionId);
+    
+    // 从全局映射中移除会话
+    if (global.asrSessions) {
+      global.asrSessions.delete(sessionId);
+    }
     
   } catch (error) {
     console.error('处理语音识别结束错误:', error);
@@ -655,9 +754,17 @@ exports.handleStreamingSpeechCancel = async (ws, data) => {
     
     console.log(`❌ [${sessionId}] 取消流式语音识别`);
     
+    // 根据配置获取ASR Provider
+    const ProviderFactory = require('../services/ProviderFactory');
+    const asrProvider = ProviderFactory.getASRProvider();
+    
     // 取消语音识别会话（不发送最终结果）
-    const speechService = require('../services/speechService');
-    await speechService.cancelStreamingRecognition(sessionId);
+    await asrProvider.cancelStreamingRecognition(sessionId);
+    
+    // 从全局映射中移除会话
+    if (global.asrSessions) {
+      global.asrSessions.delete(sessionId);
+    }
     
     // 发送取消确认
     ws.send(JSON.stringify({

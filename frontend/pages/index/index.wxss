@@ -740,20 +740,53 @@
 .voice-recording-container {
   width: 100vw;
   height: 100%;
-  background: radial-gradient(ellipse at center bottom, rgba(0, 122, 255, 0.9) 0%, rgba(0, 122, 255, 0.6) 30%, rgba(0, 122, 255, 0.3) 60%, rgba(0, 122, 255, 0.1) 80%, rgba(0, 122, 255, 0.02) 100%);
+  background: radial-gradient(ellipse at center bottom, 
+    rgba(0, 122, 255, calc(0.9 + var(--volume-glow, 0) * 0.001)) 0%, 
+    rgba(0, 122, 255, calc(0.6 + var(--volume-glow, 0) * 0.0008)) 30%, 
+    rgba(0, 122, 255, calc(0.3 + var(--volume-glow, 0) * 0.0005)) 60%, 
+    rgba(0, 122, 255, calc(0.1 + var(--volume-glow, 0) * 0.0002)) 80%, 
+    rgba(0, 122, 255, 0.02) 100%);
   border-radius: 50% 50% 0 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   position: relative;
-  transition: all 0.3s ease;
+  transition: all 0.15s ease;
   backdrop-filter: blur(15rpx);
   padding: 60rpx 40rpx 80rpx;
+  transform: scale(var(--volume-scale, 1));
+  transform-origin: center bottom;
+}
+
+.voice-recording-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(ellipse at center bottom, 
+    rgba(0, 122, 255, calc(0.3 + var(--volume-glow, 0) * 0.002)) 0%, 
+    transparent 50%);
+  border-radius: 50% 50% 0 0;
+  pointer-events: none;
+  transition: all 0.15s ease;
 }
 
 .voice-recording-container.canceling {
-  background: radial-gradient(ellipse at center bottom, rgba(255, 59, 48, 0.9) 0%, rgba(255, 59, 48, 0.6) 30%, rgba(255, 59, 48, 0.3) 60%, rgba(255, 59, 48, 0.1) 80%, rgba(255, 59, 48, 0.02) 100%);
+  background: radial-gradient(ellipse at center bottom, 
+    rgba(255, 59, 48, calc(0.9 + var(--volume-glow, 0) * 0.001)) 0%, 
+    rgba(255, 59, 48, calc(0.6 + var(--volume-glow, 0) * 0.0008)) 30%, 
+    rgba(255, 59, 48, calc(0.3 + var(--volume-glow, 0) * 0.0005)) 60%, 
+    rgba(255, 59, 48, calc(0.1 + var(--volume-glow, 0) * 0.0002)) 80%, 
+    rgba(255, 59, 48, 0.02) 100%);
+}
+
+.voice-recording-container.canceling::before {
+  background: radial-gradient(ellipse at center bottom, 
+    rgba(255, 59, 48, calc(0.3 + var(--volume-glow, 0) * 0.002)) 0%, 
+    transparent 50%);
 }
 
 /* 录音提示文字 - 在波形上方 */
@@ -801,34 +834,15 @@
 
 .waveform-bar {
   width: 5rpx;
-  background: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.9);
   border-radius: 2.5rpx;
   min-height: 16rpx;
-  transition: height 0.1s ease-out;
-  animation: waveAnimation 1.2s ease-in-out infinite;
+  transition: height 0.08s ease-out;
+  box-shadow: 0 0 8rpx rgba(255, 255, 255, 0.4),
+              0 0 16rpx rgba(255, 255, 255, 0.2);
 }
 
-.waveform-bar:nth-child(1) { animation-delay: 0s; }
-.waveform-bar:nth-child(2) { animation-delay: 0.1s; }
-.waveform-bar:nth-child(3) { animation-delay: 0.2s; }
-.waveform-bar:nth-child(4) { animation-delay: 0.3s; }
-.waveform-bar:nth-child(5) { animation-delay: 0.4s; }
-.waveform-bar:nth-child(6) { animation-delay: 0.5s; }
-.waveform-bar:nth-child(7) { animation-delay: 0.4s; }
-.waveform-bar:nth-child(8) { animation-delay: 0.3s; }
-.waveform-bar:nth-child(9) { animation-delay: 0.2s; }
-.waveform-bar:nth-child(10) { animation-delay: 0.1s; }
-
-@keyframes waveAnimation {
-  0%, 100% { 
-    background: rgba(255, 255, 255, 0.6);
-    transform: scaleY(1);
-  }
-  50% { 
-    background: rgba(255, 255, 255, 1);
-    transform: scaleY(1.8);
-  }
-}
+/* 移除默认动画，现在使用实时音量数据控制波形 */
 
 /* 录音时隐藏输入框 */
 .input-area,

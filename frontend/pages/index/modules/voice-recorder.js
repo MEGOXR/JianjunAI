@@ -17,6 +17,11 @@ class VoiceRecorder {
     this.inputTouchStartY = 0;
     this.isInputRecordingCanceled = false; // 标记输入框录音是否被取消
     
+    // 音频分析相关
+    this.frameBuffer = [];
+    this.volumeHistory = [];
+    this.maxVolumeHistory = 10;
+    
     this.setupRecorderEvents();
   }
 
@@ -33,6 +38,23 @@ class VoiceRecorder {
     this.recorderManager.onFrameRecorded((res) => {
       if (this.page.streamingSpeechManager.isActive() && res.frameBuffer) {
         this.page.streamingSpeechManager.sendAudioFrame(res.frameBuffer);
+      }
+      
+      // 分析音频帧数据获取音量
+      if ((this.page.data.isRecording || this.page.data.isInputRecording) && res.frameBuffer) {
+        const volume = this.analyzeAudioVolume(res.frameBuffer);
+        
+        // 更新音量历史
+        this.volumeHistory.push(volume);
+        if (this.volumeHistory.length > this.maxVolumeHistory) {
+          this.volumeHistory.shift();
+        }
+        
+        // 计算平均音量用于平滑动画
+        const avgVolume = this.volumeHistory.reduce((a, b) => a + b, 0) / this.volumeHistory.length;
+        
+        // 根据音量生成波形数据
+        this.updateWaveformDisplay(avgVolume);
       }
     });
     
@@ -337,7 +359,7 @@ class VoiceRecorder {
       numberOfChannels: 1,
       encodeBitRate: 48000,
       format: 'pcm',
-      frameSize: 2
+      frameSize: 5  // 增加frameSize以获得更频繁的帧回调
     };
     
     this.recorderManager.start(options);
@@ -346,7 +368,8 @@ class VoiceRecorder {
       isRecording: true,
       showVoiceModal: true,
       recordingDuration: 0,
-      waveformData: new Array(10).fill(30)
+      waveformData: new Array(10).fill(30),
+      currentVolume: 0
     });
     
     this.startRecordingTimer();
@@ -411,7 +434,8 @@ class VoiceRecorder {
         isInputRecording: true,
         showVoiceModal: true,
         recordingDuration: 0,
-        waveformData: new Array(10).fill(30)
+        waveformData: new Array(10).fill(30),
+        currentVolume: 0
       });
       console.log('📺 录音UI状态已设置:', {
         isInputRecording: true,
@@ -430,7 +454,7 @@ class VoiceRecorder {
         numberOfChannels: 1,
         encodeBitRate: 48000,
         format: 'pcm',
-        frameSize: 2
+        frameSize: 5  // 增加frameSize以获得更频繁的帧回调
       });
       
       this.startRecordingTimer();
@@ -578,15 +602,22 @@ class VoiceRecorder {
    * 开始波形动画
    */
   startWaveformAnimation() {
+    // 初始化音频分析
+    this.frameBuffer = [];
+    this.volumeHistory = [];
+    
+    // 备用: 如果没有帧数据，使用随机动画
     this.waveformTimer = setInterval(() => {
-      if (!this.page.data.isRecording) return;
+      if (!this.page.data.isRecording && !this.page.data.isInputRecording) return;
       
-      const waveformData = Array(10).fill(0).map(() => {
-        return Math.random() * 60 + 30;
-      });
-      
-      this.page.setData({ waveformData });
-    }, 120);
+      // 如果2秒内没有收到帧数据，使用随机动画
+      if (this.volumeHistory.length === 0) {
+        const waveformData = Array(10).fill(0).map(() => {
+          return Math.random() * 40 + 20;
+        });
+        this.page.setData({ waveformData });
+      }
+    }, 2000);
   }
 
   /**
@@ -597,6 +628,70 @@ class VoiceRecorder {
       clearInterval(this.waveformTimer);
       this.waveformTimer = null;
     }
+    
+    // 清理音频分析相关数据
+    this.frameBuffer = [];
+    this.volumeHistory = [];
+    
+    // 重置音量
+    this.page.setData({ currentVolume: 0 });
+  }
+  
+  /**
+   * 分析音频帧数据获取音量
+   */
+  analyzeAudioVolume(frameBuffer) {
+    if (!frameBuffer || frameBuffer.byteLength === 0) return 0;
+    
+    // 将ArrayBuffer转换为Int16Array（PCM格式）
+    const dataView = new Int16Array(frameBuffer);
+    let sum = 0;
+    
+    // 计算RMS（均方根）音量
+    for (let i = 0; i < dataView.length; i++) {
+      sum += dataView[i] * dataView[i];
+    }
+    
+    const rms = Math.sqrt(sum / dataView.length);
+    
+    // 归一化到0-100的范围
+    const maxValue = 32768; // 16位音频的最大值
+    const volume = (rms / maxValue) * 100;
+    
+    return Math.min(100, volume * 2); // 放大2倍以获得更好的视觉效果
+  }
+  
+  /**
+   * 根据音量更新波形显示
+   */
+  updateWaveformDisplay(volume) {
+    // 生成10个波形条的高度
+    const waveformData = [];
+    const baseHeight = 20; // 基础高度
+    const maxHeight = 90; // 最大高度
+    
+    // 中间的条形应该更高
+    for (let i = 0; i < 10; i++) {
+      // 计算每个条的基础高度（中间高，两边低）
+      const centerDistance = Math.abs(i - 4.5);
+      const heightMultiplier = 1 - (centerDistance / 5) * 0.3;
+      
+      // 根据音量调整高度
+      const volumeEffect = (volume / 100) * (maxHeight - baseHeight);
+      
+      // 添加一些随机性让动画更自然
+      const randomFactor = 0.8 + Math.random() * 0.4;
+      
+      const height = baseHeight + volumeEffect * heightMultiplier * randomFactor;
+      waveformData.push(Math.min(maxHeight, Math.max(baseHeight, height)));
+    }
+    
+    // 更新波形数据和背景动画强度
+    this.page.setData({ 
+      waveformData,
+      // 添加音量数据用于背景动画
+      currentVolume: volume
+    });
   }
 
   /**
