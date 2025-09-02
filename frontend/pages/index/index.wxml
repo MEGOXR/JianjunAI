@@ -25,35 +25,21 @@
 
       <!-- AI 消息 -->
       <view class="message-item" id="msg-{{index}}" wx:if="{{item.role === 'assistant'}}">
-        <view class="ai-message {{item.isLoading ? 'loading-message' : ''}}" 
-              bindtap="onAIMessageTap" data-message-id="{{item.id}}">
+        <view class="ai-message {{item.isLoading ? 'loading-message' : ''}}">
           <!-- 加载动画 -->
           <view wx:if="{{item.isLoading}}" class="loading-container">
             <text class="loading-text">正在生成</text>
             <text class="loading-dots"></text>
           </view>
-          <!-- 【关键简化】直接渲染 content，不再需要 segments 和 if/else 判断 -->
-          <text wx:else user-select="true">{{item.content}}</text>
-        </view>
-        
-        <!-- TTS控制按钮组 - 仅在消息完成时显示 -->
-        <view class="message-controls" wx:if="{{!item.isLoading && item.content}}">
-          <!-- 复制按钮 -->
-          <view class="control-btn copy-btn" bindtap="copyMessage" data-content="{{item.content}}">
-            <text class="control-icon">📋</text>
-          </view>
-          
-          <!-- 朗读控制按钮 -->
-          <view class="control-btn tts-btn" bindtap="toggleTTS" data-message-id="{{item.id}}">
-            <!-- 朗读中：显示动态声波 -->
-            <view wx:if="{{item.isPlaying}}" class="sound-wave">
-              <view class="wave-bar bar1"></view>
-              <view class="wave-bar bar2"></view>
-              <view class="wave-bar bar3"></view>
-              <view class="wave-bar bar4"></view>
+          <!-- 消息内容和复制按钮 -->
+          <view wx:else class="message-content-wrapper">
+            <text class="message-text" user-select="true">{{item.content}}</text>
+            <!-- 复制按钮 - 另起一行放在右下角 -->
+            <view style="clear: both; text-align: right; margin-top: 8rpx;">
+              <view class="inline-copy-btn" bindtap="copyMessage" data-content="{{item.content}}" wx:if="{{item.content}}">
+                <image class="copy-icon" src="/images/copy.svg" />
+              </view>
             </view>
-            <!-- 未播放：显示喇叭图标 -->
-            <text wx:else class="control-icon">🔊</text>
           </view>
         </view>
         
