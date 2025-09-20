@@ -101,7 +101,15 @@ class ErrorHandler {
    */
   static getWebSocketErrorMessage(error) {
     const isDevelopment = process.env.NODE_ENV !== 'production';
-    
+
+    // Handle cases where error or error.message is undefined
+    if (!error || !error.message) {
+      return {
+        error: 'Unknown Error',
+        message: isDevelopment ? 'An unknown error occurred' : '发生了未知错误，请重试。'
+      };
+    }
+
     // Azure OpenAI specific errors
     if (error.message.includes('content filter')) {
       return {

@@ -69,6 +69,9 @@
   <!-- 流式语音识别界面已移除 -->
 
   <!-- 输入区域 -->
+  <!-- AI 免责声明 -->
+  <view class="disclaimer-text">内容由AI生成，仅供参考</view>
+  
   <!-- 文字输入模式 -->
   <view class="input-area {{showVoiceModal ? 'hidden' : ''}}" wx:if="{{!isVoiceMode}}">
     <view class="input-container">

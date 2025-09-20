@@ -196,8 +196,10 @@ app.use(ErrorHandler.notFoundHandler);
 app.use(ErrorHandler.expressErrorHandler);
 
 // 创建 WebSocket 服务器
-const server = app.listen(port, () => {
+const server = app.listen(port, '0.0.0.0', () => {
   console.log(`服务器运行在端口 ${port}`);
+  console.log(`服务器地址: http://0.0.0.0:${port} (监听所有网络接口)`);
+  console.log(`局域网访问: http://192.168.1.13:${port}`);
   console.log(`环境变量检查:`);
   console.log(`- NODE_ENV: ${process.env.NODE_ENV}`);
   console.log(`- PORT: ${process.env.PORT}`);
