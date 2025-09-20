@@ -88,10 +88,26 @@ app.get('/', (req, res) => {
 
 // 健康检查
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
+  res.status(200).json({
     status: 'OK',
     timestamp: new Date().toISOString(),
     port: port
+  });
+});
+
+// 版本检查接口 - 确认当前部署的代码版本
+app.get('/api/version', (req, res) => {
+  res.json({
+    version: '2.1.0', // 新版本号，包含语音识别修复
+    build: new Date().toISOString(),
+    features: {
+      voiceMessageDisplay: true, // 标记新功能已部署
+      azureASRIntegration: true,
+      immediateVoiceToLLM: true
+    },
+    environment: process.env.NODE_ENV || 'development',
+    azureASRConfigured: !!(getEnvVar('AZURE_SPEECH_KEY')),
+    deployment: 'azure-app-service'
   });
 });
 

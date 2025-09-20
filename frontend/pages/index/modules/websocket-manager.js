@@ -147,6 +147,7 @@ class WebSocketManager {
    * 处理接收到的消息
    */
   handleMessage(data) {
+    console.log('📨 收到WebSocket消息:', data.type, data);
     let newMessages = [...this.page.data.messages];
     
     // 处理问候消息
@@ -209,6 +210,7 @@ class WebSocketManager {
     // 处理语音消息显示
     if (data.type === 'voice_message_display') {
       console.log('🎤 收到语音消息显示请求:', data.text);
+      console.log('🎤 完整的voice_message_display数据:', JSON.stringify(data));
 
       // 创建用户消息
       const userMessage = this.page.messageManager.createUserMessage(data.text);

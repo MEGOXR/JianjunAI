@@ -534,16 +534,19 @@ exports.handleStreamingSpeechEnd = async (ws, data) => {
 
     // 🔥 通知前端显示语音消息并直接发送给LLM
     if (recognizedText && recognizedText.trim()) {
-      console.log('🤖 通知前端显示语音消息并发送给LLM:', recognizedText.trim());
+      console.log('🤖 [VERSION 2.1.0] 通知前端显示语音消息并发送给LLM:', recognizedText.trim());
 
       // 立即发送语音消息给前端显示
+      console.log('📤 发送voice_message_display消息到前端');
       ws.send(JSON.stringify({
         type: 'voice_message_display',
         text: recognizedText.trim(),
-        sessionId: data.sessionId
+        sessionId: data.sessionId,
+        version: '2.1.0'
       }));
 
       // 立即调用LLM处理
+      console.log('🚀 立即调用LLM处理语音识别结果');
       exports.sendMessage(ws, recognizedText.trim());
     }
 
