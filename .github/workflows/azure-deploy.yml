@@ -6,7 +6,7 @@ name: Build and deploy Node.js app to Azure Web App - AIPlasticSurgury
 on:
   push:
     branches:
-      - azure-deploy  # 改为特定分支，避免与volcengine冲突
+      - main  # 修复为main分支，确保推送时触发部署
   workflow_dispatch:
 
 jobs:
