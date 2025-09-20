@@ -147,33 +147,21 @@ class StreamingSpeechManager {
       // 最终识别结果（确定）
       this.streamingSpeech.finalResult = data.text;
       console.log('✅ 最终识别:', data.text);
-      
-      // 自动发送识别结果
-      if (data.text && data.text.trim()) {
-        setTimeout(() => {
-          this.page.setData({ 
-            userInput: data.text.trim(),
-            isStreamingSpeech: false,
-            // 关闭录音界面
-            showVoiceModal: false,
-            isInputRecording: false,
-            isRecording: false,
-            isRecordingCanceling: false
-          });
-          this.page.messageManager.sendMessage();
-        }, 300);
-      } else {
-        setTimeout(() => {
-          this.page.setData({
-            isStreamingSpeech: false,
-            // 关闭录音界面
-            showVoiceModal: false,
-            isInputRecording: false,
-            isRecording: false,
-            isRecordingCanceling: false
-          });
-        }, 1000);
-      }
+
+      // 💡 不再自动发送消息，因为后端会处理语音消息的显示和发送
+      console.log('🤖 后端将处理语音消息显示和LLM调用');
+
+      // 只需要关闭录音界面
+      setTimeout(() => {
+        this.page.setData({
+          isStreamingSpeech: false,
+          // 关闭录音界面
+          showVoiceModal: false,
+          isInputRecording: false,
+          isRecording: false,
+          isRecordingCanceling: false
+        });
+      }, data.text && data.text.trim() ? 300 : 1000);
       
     } else if (data.resultType === 'canceled') {
       // 识别被取消

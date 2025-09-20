@@ -10,7 +10,45 @@ const ErrorHandler = require('../middleware/errorHandler');
 const ConfigService = require('../services/ConfigService');
 const ProviderFactory = require('../services/ProviderFactory');
 
-// 环境变量读取辅助函数（处理 Azure App Service 的 APPSETTING_ 前缀）
+// 性能计时工具
+class PerformanceTimer {
+  constructor(requestId) {
+    this.requestId = requestId;
+    this.timings = {};
+    this.startTime = Date.now();
+    this.marks = [];
+  }
+
+  mark(label, metadata = {}) {
+    const now = Date.now();
+    const elapsed = now - this.startTime;
+    const lastMark = this.marks.length > 0 ? this.marks[this.marks.length - 1] : null;
+    const delta = lastMark ? now - lastMark.timestamp : elapsed;
+    
+    const mark = {
+      label,
+      timestamp: now,
+      elapsed,
+      delta,
+      ...metadata
+    };
+    
+    this.marks.push(mark);
+    console.log(`[${this.requestId}] ⏱️ ${label}: +${delta}ms (total: ${elapsed}ms)`, metadata);
+    
+    return mark;
+  }
+
+  getReport() {
+    return {
+      requestId: this.requestId,
+      totalTime: Date.now() - this.startTime,
+      marks: this.marks
+    };
+  }
+}
+
+// 环境变量读取辅助函数
 function getEnvVar(name) {
   return process.env[name] || process.env[`APPSETTING_${name}`] || null;
 }
@@ -21,14 +59,10 @@ const apiKey = getEnvVar('AZURE_OPENAI_API_KEY');
 const apiVersion = getEnvVar('OPENAI_API_VERSION');
 const deployment = getEnvVar('AZURE_OPENAI_DEPLOYMENT_NAME');
 
-// 验证配置的函数（延迟到实际使用时检查）
+// 验证配置的函数
 function validateAzureConfig() {
   if (!endpoint || !apiKey || !apiVersion || !deployment) {
     console.error('LLM configuration missing. Please check environment variables.');
-    console.error(`Endpoint: ${endpoint ? '已设置' : '未设置'}`);
-    console.error(`API Key: ${apiKey ? '已设置' : '未设置'}`);
-    console.error(`API Version: ${apiVersion ? '已设置' : '未设置'}`);
-    console.error(`Deployment: ${deployment ? '已设置' : '未设置'}`);
     throw new Error('LLM credentials not configured');
   }
 }
@@ -36,111 +70,56 @@ function validateAzureConfig() {
 // 使用 userId 作为 key 来存储对话历史
 const chatHistories = new Map();
 
-// 内存管理配置 - 更加保守的设置
-const MAX_HISTORY_SIZE = 100; // 减少到100个用户
-const CLEANUP_INTERVAL = 15 * 60 * 1000; // 15分钟清理一次
-const MAX_IDLE_TIME = 2 * 60 * 60 * 1000; // 2小时空闲时间
-const MAX_MESSAGES_PER_USER = 20; // 每个用户最多保存20条消息
+// 内存管理配置
+const MAX_HISTORY_SIZE = 100;
+const CLEANUP_INTERVAL = 15 * 60 * 1000;
+const MAX_IDLE_TIME = 2 * 60 * 60 * 1000;
+const MAX_MESSAGES_PER_USER = 8;
 
-// 增强的清理功能
+// 清理功能
 function cleanupChatHistories() {
   const now = Date.now();
   let cleanedCount = 0;
-  let memoryFreed = 0;
-  
-  // 记录清理前的内存使用
-  const usedBefore = process.memoryUsage();
   
   for (const [userId, history] of chatHistories.entries()) {
-    // 检查最后访问时间
     const lastAccess = history.lastAccess || 0;
     if (now - lastAccess > MAX_IDLE_TIME) {
-      // 估算释放的内存
-      const memorySize = JSON.stringify(history).length;
-      memoryFreed += memorySize;
-      
       chatHistories.delete(userId);
       cleanedCount++;
       continue;
     }
     
-    // 限制每个用户的消息数量
     if (history.messages && history.messages.length > MAX_MESSAGES_PER_USER) {
-      const removedMessages = history.messages.splice(0, history.messages.length - MAX_MESSAGES_PER_USER);
-      memoryFreed += JSON.stringify(removedMessages).length;
-      console.log(`Trimmed ${removedMessages.length} old messages for user ${userId}`);
+      history.messages.splice(0, history.messages.length - MAX_MESSAGES_PER_USER);
     }
   }
   
-  // 如果仍然超过最大大小，删除最久未使用的
   if (chatHistories.size > MAX_HISTORY_SIZE) {
     const sortedEntries = [...chatHistories.entries()]
       .sort((a, b) => (a[1].lastAccess || 0) - (b[1].lastAccess || 0));
     
     const toRemove = sortedEntries.slice(0, chatHistories.size - MAX_HISTORY_SIZE);
-    toRemove.forEach(([userId, history]) => {
-      memoryFreed += JSON.stringify(history).length;
+    toRemove.forEach(([userId]) => {
       chatHistories.delete(userId);
       cleanedCount++;
     });
   }
   
-  // 强制垃圾回收（如果可用）
-  if (global.gc) {
-    global.gc();
-  }
-  
-  const usedAfter = process.memoryUsage();
-  const heapFreed = usedBefore.heapUsed - usedAfter.heapUsed;
-  
-  if (cleanedCount > 0 || memoryFreed > 0) {
-    console.log(`Memory cleanup: removed ${cleanedCount} histories, freed ~${Math.round(memoryFreed/1024)}KB data, heap change: ${Math.round(heapFreed/1024)}KB. Current size: ${chatHistories.size}`);
-  }
-  
-  // 检查内存压力
-  const memUsage = process.memoryUsage();
-  const heapUsedMB = Math.round(memUsage.heapUsed / 1024 / 1024);
-  if (heapUsedMB > 100) { // 如果堆内存超过100MB
-    console.warn(`High memory usage detected: ${heapUsedMB}MB heap used`);
-    // 更激进的清理
-    const aggressiveCleanup = Math.floor(chatHistories.size * 0.3); // 清理30%
-    if (aggressiveCleanup > 0) {
-      const entriesToRemove = [...chatHistories.entries()]
-        .sort((a, b) => (a[1].lastAccess || 0) - (b[1].lastAccess || 0))
-        .slice(0, aggressiveCleanup);
-      
-      entriesToRemove.forEach(([userId]) => chatHistories.delete(userId));
-      console.log(`Aggressive cleanup: removed ${aggressiveCleanup} additional histories`);
-    }
+  if (cleanedCount > 0) {
+    console.log(`Memory cleanup: removed ${cleanedCount} histories. Current size: ${chatHistories.size}`);
   }
 }
 
 // 启动定期清理
 const cleanupTimer = setInterval(cleanupChatHistories, CLEANUP_INTERVAL);
 
-// 监控内存使用情况
-function logMemoryUsage() {
-  const usage = process.memoryUsage();
-  console.log('Memory usage:', {
-    rss: Math.round(usage.rss / 1024 / 1024) + 'MB',
-    heapTotal: Math.round(usage.heapTotal / 1024 / 1024) + 'MB', 
-    heapUsed: Math.round(usage.heapUsed / 1024 / 1024) + 'MB',
-    external: Math.round(usage.external / 1024 / 1024) + 'MB',
-    chatHistories: chatHistories.size
-  });
-}
-
-// 每小时记录一次内存使用
-const memoryTimer = setInterval(logMemoryUsage, 60 * 60 * 1000);
-
 // 优雅关闭
 process.on('SIGTERM', () => {
   clearInterval(cleanupTimer);
-  clearInterval(memoryTimer);
   chatHistories.clear();
 });
 
-// 获取用户ID（应该已经通过JWT认证设置）
+// 获取用户ID
 const getUserId = (ws) => {
   if (!ws.userId) {
     console.error('WebSocket没有用户ID，JWT认证可能失败');
@@ -150,66 +129,53 @@ const getUserId = (ws) => {
 };
 
 exports.sendMessage = async (ws, prompt) => {
-  console.log('收到消息:', { prompt, userId: ws.userId });
+  // 创建请求ID和计时器
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const timer = new PerformanceTimer(requestId);
   
-  // 检查是否启用Provider模式（移到try外面，确保在catch中也能访问）
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`[${requestId}] 🚀 新请求开始`);
+  console.log(`用户: ${ws.userId}`);
+  console.log(`问题: ${prompt}`);
+  console.log(`${'='.repeat(60)}`);
+  
+  timer.mark('请求接收完成', { prompt: prompt.substring(0, 50) });
+  
   const useProvider = ConfigService.isProviderEnabled();
   
   try {
-    
+    // 1. 验证配置
+    timer.mark('开始验证配置');
     if (useProvider) {
       console.log(`使用 ${ConfigService.getProviderType()} Provider`);
     } else {
-      // 验证Azure配置
       validateAzureConfig();
       console.log('Azure配置验证通过');
     }
+    timer.mark('配置验证完成');
     
+    // 2. 获取用户ID
     const userId = getUserId(ws);
-    console.log('用户ID:', userId);
+    timer.mark('用户ID获取完成', { userId });
     
-    // 获取用户数据（非阻塞）
+    // 3. 异步获取用户数据
+    timer.mark('开始获取用户数据');
     const userDataPromise = userDataService.getUserData(userId);
     
-    // 异步处理名字提取，不阻塞主流程
-    const handleNameExtraction = async () => {
-      try {
-        const userData = await userDataPromise;
-        const currentName = userData?.userInfo?.extractedName;
-        if (!currentName || await nameExtractorService.shouldUpdateName(currentName, prompt)) {
-          const historyObj = chatHistories.get(userId);
-          const history = historyObj ? historyObj.messages || [] : [];
-          const messagesForExtraction = [...history, { role: 'user', content: prompt }];
-          
-          const extractedName = await nameExtractorService.extractNameFromConversation(messagesForExtraction);
-          if (extractedName) {
-            await userDataService.updateUserInfo(userId, { extractedName });
-            console.log(`提取到用户名字: ${extractedName}`);
-          }
-        }
-      } catch (error) {
-        console.error('名字提取失败（后台处理）:', error);
-      }
-    };
-    
-    // 启动后台名字提取（不等待）
-    handleNameExtraction();
-    
-    // 获取或初始化用户的对话历史
+    // 4. 初始化或获取对话历史
+    timer.mark('开始初始化对话历史');
     if (!chatHistories.has(userId)) {
-      // 异步获取用户数据，但不阻塞历史记录初始化
       userDataPromise.then(userData => {
         const savedHistory = userData?.chatHistory || [];
-        
         if (savedHistory.length > 0 && !chatHistories.has(userId)) {
           chatHistories.set(userId, {
             messages: savedHistory,
             lastAccess: Date.now()
           });
+          timer.mark('从存储加载历史记录', { historyLength: savedHistory.length });
         }
       }).catch(console.error);
       
-      // 立即使用默认历史记录，避免等待文件读取
       chatHistories.set(userId, {
         messages: [
           {
@@ -219,15 +185,14 @@ exports.sendMessage = async (ws, prompt) => {
         ],
         lastAccess: Date.now()
       });
+      timer.mark('创建新的对话历史');
     }
     
-    // 更新最后访问时间
+    // 5. 更新历史记录
     let historyData = chatHistories.get(userId);
-    console.log('获取到的historyData:', historyData, '类型:', typeof historyData);
+    timer.mark('获取对话历史完成', { messageCount: historyData?.messages?.length });
     
     if (Array.isArray(historyData)) {
-      // 兼容旧格式
-      console.log('转换旧格式数组为新对象格式');
       chatHistories.set(userId, {
         messages: historyData,
         lastAccess: Date.now()
@@ -236,7 +201,6 @@ exports.sendMessage = async (ws, prompt) => {
     } else if (historyData && typeof historyData === 'object') {
       historyData.lastAccess = Date.now();
     } else {
-      console.log('historyData为空或无效，重新初始化');
       historyData = {
         messages: [
           {
@@ -249,538 +213,453 @@ exports.sendMessage = async (ws, prompt) => {
       chatHistories.set(userId, historyData);
     }
 
-    let history;
-    if (Array.isArray(historyData)) {
-      // 兼容旧格式：直接是数组
-      history = historyData;
-    } else if (historyData && Array.isArray(historyData.messages)) {
-      // 新格式：对象包含messages数组
-      history = historyData.messages;
-    } else {
-      // 初始化默认历史记录
-      history = [
-        {
-          role: "system",
-          content: promptService.getSystemPrompt()
-        }
-      ];
-      console.log('初始化默认历史记录');
-    }
+    let history = historyData.messages || [];
     
-    console.log('最终history数组长度:', history.length);
-    console.log('history是数组:', Array.isArray(history));
-    
-    // 添加用户新消息
+    // 6. 添加用户消息
     history.push({ role: "user", content: prompt });
+    timer.mark('用户消息添加完成');
 
-    // 发送初始化消息给客户端
+    // 7. 发送初始化消息
     ws.send(JSON.stringify({ 
       type: 'init',
       userId: userId,
-      history: history 
+      requestId: requestId,
+      timing: timer.getReport()
     }));
-
-    // 最终验证 history 是数组
-    if (!Array.isArray(history)) {
-      console.error('history不是数组！类型:', typeof history, '内容:', history);
-      throw new Error('History must be an array');
-    }
+    timer.mark('初始化消息发送完成');
     
-    console.log('准备调用LLM，历史消息数:', history.length);
-    console.log('history数组示例:', history.slice(0, 2));
-    
+    // 8. 调用LLM
     let stream;
+    timer.mark('开始调用LLM');
     
     if (useProvider) {
-      // 使用Provider模式
+      // Provider模式
       const llmProvider = ProviderFactory.getLLMProvider();
+      timer.mark('Provider工厂获取完成');
+      
       await llmProvider.initialize();
+      timer.mark('Provider初始化完成');
       
       console.log(`调用 ${llmProvider.getName()}，模型:`, llmProvider.getModelInfo());
       
       stream = await llmProvider.createChatStream(history, {
-        maxTokens: 2000,
-        temperature: 0.5,
-        presencePenalty: 0.1,
-        frequencyPenalty: 0.2,
-        stop: null
+        maxTokens: 1000,
+        temperature: 0.5
       });
+      timer.mark('Provider流创建完成');
     } else {
-      // 原始Azure模式
+      // Azure模式
       const client = new AzureOpenAI({
         apiKey,
         endpoint,
         apiVersion,
         deployment,
       });
-      
-      console.log('准备调用LLM，部署名称:', deployment);
+      timer.mark('Azure客户端创建完成');
       
       stream = await client.chat.completions.create({
-        model: deployment,  // 使用环境变量中的部署名称
+        model: deployment,
         messages: history,
         stream: true,
-        max_tokens: 2000,     // 保持合理的token限制
+        max_tokens: 2000,
         temperature: 0.5,
         presence_penalty: 0.1,
         frequency_penalty: 0.2,
-        stop: null  // 让 AI 自然地完成回答
+        stop: null
       });
+      timer.mark('Azure流创建完成');
     }
     
     console.log('LLM流创建成功');
-
+    
+    // 9. 处理流式响应
     let assistantResponse = '';
-
-    // 流式处理 AI 的回复
+    let firstTokenReceived = false;
+    let tokenCount = 0;
+    
     for await (const chunk of stream) {
       const content = chunk.choices?.[0]?.delta?.content;
       if (content !== undefined) {
+        // 记录首个token时间
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          timer.mark('🎯 首个Token接收 (TTFT)', { 
+            ttft: Date.now() - timer.startTime,
+            tokenCount: 1
+          });
+        }
+        
+        tokenCount++;
         assistantResponse += content;
-        // 对每个片段进行实时清理
+        
+        // 清理并发送内容
         const cleanedContent = content
-          .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')  // 粗斜体
-          .replace(/\*\*([^*]+)\*\*/g, '「$1」')      // 加粗
-          .replace(/\*([^*]+)\*/g, '$1')             // 斜体
-          .replace(/#{1,6}\s*/g, '')                 // 标题
-          .replace(/^\s*[-*+]\s+/gm, '• ')          // 列表
-          .replace(/`([^`]+)`/g, '「$1」');          // 行内代码
-          // 移除单独的Markdown符号，但保留正常标点符号
-        ws.send(JSON.stringify({ data: cleanedContent }));
-        console.log('发送消息片段，长度:', cleanedContent.length);
-      }
-
-      // 检查是否完成
-      if (chunk.choices?.[0]?.finish_reason) {
-        console.log('AI完成回复，原因:', chunk.choices[0].finish_reason);
-        break;
-      }
-    }
-
-    // 清理回复中的Markdown格式符号，使其适合微信显示
-    const cleanedResponse = promptService.cleanMarkdownForWeChat(assistantResponse);
-    
-    // 将清理后的 AI 回复添加到历史记录中
-    if (!Array.isArray(history)) {
-      console.error('在push回复时，history不是数组！类型:', typeof history);
-      throw new Error('History must be an array for push operation');
-    }
-    
-    history.push({ role: "assistant", content: cleanedResponse });
-
-    // 智能历史记录管理 - 保持最近的对话但限制总长度
-    if (history.length > MAX_MESSAGES_PER_USER) {
-      // 保留系统消息和最近的对话
-      const systemMessage = history[0]; // 系统提示
-      const recentMessages = history.slice(-MAX_MESSAGES_PER_USER + 1);
-      history.length = 0; // 清空数组
-      history.push(systemMessage, ...recentMessages);
-      console.log(`Trimmed history to ${history.length} messages for user ${userId}`);
-    }
-    
-    // 保存聊天历史到持久化存储
-    await userDataService.updateChatHistory(userId, history);
-    
-    // 更新内存中的历史记录
-    const updatedHistoryData = chatHistories.get(userId);
-    if (updatedHistoryData) {
-      if (Array.isArray(updatedHistoryData)) {
-        // 如果是旧格式数组，替换为新格式对象
-        chatHistories.set(userId, {
-          messages: history,
-          lastAccess: Date.now()
-        });
-      } else {
-        // 新格式对象，更新messages和lastAccess
-        updatedHistoryData.messages = history;
-        updatedHistoryData.lastAccess = Date.now();
-      }
-    }
-
-    // 异步生成建议问题，不阻塞done消息
-    const generateSuggestionsAsync = async () => {
-      try {
-        // 先检查预热服务是否已经生成了建议
-        const warmupService = require('../services/warmupService');
-        const warmupResults = await warmupService.getWarmupResults(userId);
-        
-        let suggestions;
-        if (warmupResults && warmupResults.suggestions && warmupResults.suggestions.length > 0) {
-          console.log('使用预热的建议问题:', warmupResults.suggestions);
-          suggestions = warmupResults.suggestions;
-        } else {
-          // 预热没有准备好建议，现场生成
-          console.log('预热建议未就绪，现场生成');
-          suggestions = await suggestionService.generateSuggestions(history, cleanedResponse);
-          console.log('建议问题生成完成:', suggestions);
-        }
-        
-        // 发送建议问题
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ 
-            type: 'suggestions',
-            suggestions: suggestions
-          }));
-        }
-      } catch (error) {
-        console.error('生成建议问题失败:', error);
-        // 如果生成失败，使用备用建议问题
-        const suggestions = suggestionService.getFallbackSuggestions();
-        console.log('使用备用建议问题:', suggestions);
-        
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ 
-            type: 'suggestions',
-            suggestions: suggestions
-          }));
-        }
-      }
-    };
-
-    console.log('发送done标记给客户端');
-    ws.send(JSON.stringify({ done: true }));
-    console.log('done标记发送完成');
-    
-    // 后台生成建议问题（优先使用预热数据）
-    generateSuggestionsAsync();
-  } catch (error) {
-    const providerName = useProvider ? ConfigService.getProviderType() : 'LLM';
-    console.error(`${providerName} LLM 调用出错:`, error);
-    ErrorHandler.handleWebSocketError(ws, error, `${providerName} Chat`);
-    
-    // 检查是否是内容过滤错误
-    if (error.code === 'content_filter' || error.message?.includes('content management policy')) {
-      // 发送友好的内容过滤回复
-      const contentFilterResponse = "很抱歉，您的消息涉及一些敏感内容，我无法回复。作为您的整形美容顾问，我更希望为您提供专业的医疗咨询服务。\n\n请问您有什么关于整形美容方面的问题吗？比如：\n• 面部轮廓改善\n• 皮肤护理建议\n• 手术方案咨询\n• 术后恢复指导\n\n我会用专业的知识为您解答～";
-      
-      // 模拟流式发送友好回复
-      const chunks = contentFilterResponse.split('');
-      for (let i = 0; i < chunks.length; i += 2) {
-        const chunk = chunks.slice(i, i + 2).join('');
-        ws.send(JSON.stringify({ data: chunk }));
-        // 添加小延迟模拟真实的流式响应
-        await new Promise(resolve => setTimeout(resolve, 20));
-      }
-      ws.send(JSON.stringify({ done: true }));
-    }
-  }
-};
-
-
-// 增强的断开连接处理
-exports.handleDisconnect = async (ws) => {
-  const userId = ws.userId;
-  
-  // 清理正在进行的语音识别会话
-  try {
-    console.log('🧹 开始清理所有语音识别会话，当前会话数:', global.asrSessions ? global.asrSessions.size : 0);
-    
-    if (global.asrSessions && global.asrSessions.size > 0) {
-      const ProviderFactory = require('../services/ProviderFactory');
-      const asrProvider = ProviderFactory.getASRProvider();
-      
-      for (const [sessionId] of global.asrSessions) {
-        try {
-          await asrProvider.cancelStreamingRecognition(sessionId);
-        } catch (error) {
-          console.error(`清理ASR会话 ${sessionId} 失败:`, error.message);
-        }
-      }
-      global.asrSessions.clear();
-    }
-    console.log('✅ 语音识别会话清理完成');
-  } catch (error) {
-    console.error('清理语音识别会话失败:', error);
-  }
-  
-  // 清理 WebSocket 相关资源
-  if (ws.readyState === ws.OPEN) {
-    ws.close();
-  }
-  
-  // 更新最后访问时间但不删除历史记录
-  if (userId && chatHistories.has(userId)) {
-    const historyData = chatHistories.get(userId);
-    if (historyData && typeof historyData === 'object') {
-      historyData.lastAccess = Date.now();
-    }
-  }
-  
-  // 清理 WebSocket 对象上的用户数据
-  delete ws.userId;
-  
-  console.log(`WebSocket disconnected for user: ${userId || 'unknown'}`);
-};
-
-// 新增：处理用户连接时的初始化
-exports.handleConnection = async (ws) => {
-  try {
-    console.log('处理WebSocket连接初始化');
-    
-    const userId = getUserId(ws);
-    console.log('获取用户ID:', userId);
-    
-    // 立即发送连接确认，让用户感知连接成功
-    if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'connected',
-        userId: userId,
-        timestamp: new Date().toISOString()
-      }));
-      console.log('连接确认已发送');
-    }
-    
-    // 立即启动预热服务，开始所有前置工作
-    const warmupService = require('../services/warmupService');
-    warmupService.startUserWarmup(userId, ws)
-      .then(() => {
-        console.log(`🎉 用户 ${userId} 预热流程完成`);
-        // 更新用户最后访问时间（非阻塞）
-        userDataService.updateUserInfo(userId, { lastVisitTime: Date.now() })
-          .then(() => console.log('更新用户访问时间成功'))
-          .catch(err => console.error('更新用户访问时间失败:', err));
-      })
-      .catch(error => {
-        console.error(`用户 ${userId} 预热失败:`, error);
-        // 预热失败不影响正常连接
-      });
-    
-    return userId;
-  } catch (error) {
-    console.error('handleConnection 出错:', error);
-    // 不要关闭连接，只发送错误消息
-    try {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'error',
-          error: '初始化失败',
-          details: '连接初始化时遇到问题，但连接仍然可用',
-          message: '连接初始化时遇到问题，但连接仍然可用'
+          .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')
+          .replace(/\*\*([^*]+)\*\*/g, '「$1」')
+          .replace(/\*([^*]+)\*/g, '$1')
+          .replace(/#{1,6}\s*/g, '')
+          .replace(/^\s*[-*+]\s+/gm, '• ')
+          .replace(/`([^`]+)`/g, '「$1」');
+          
+        ws.send(JSON.stringify({ 
+          data: cleanedContent,
+          timing: {
+            elapsed: Date.now() - timer.startTime,
+            tokenIndex: tokenCount
+          }
         }));
       }
-    } catch (sendError) {
-      console.error('发送错误消息失败:', sendError);
-    }
-    // 不重新抛出错误，避免关闭连接
-    return ws.userId || null;
-  }
-};
-
-// ==================== 流式语音识别处理 ====================
-
-/**
- * 处理流式语音识别开始
- */
-exports.handleStreamingSpeechStart = async (ws, data) => {
-  try {
-    const { sessionId, config } = data;
-    
-    // 验证会话参数
-    if (!sessionId || !config) {
-      ws.send(JSON.stringify({
-        type: 'speech_result',
-        sessionId: sessionId,
-        resultType: 'error',
-        error: '缺少必要参数'
-      }));
-      return;
     }
     
-    console.log(`🎤 [${sessionId}] 开始流式语音识别，配置:`, config);
-    
-    // 根据配置获取ASR Provider
-    const ProviderFactory = require('../services/ProviderFactory');
-    const ConfigService = require('../services/ConfigService');
-    const providerType = ConfigService.getProviderType();
-    
-    console.log(`使用 ${providerType} ASR Provider`);
-    
-    const asrProvider = ProviderFactory.getASRProvider();
-    
-    if (!asrProvider) {
-      throw new Error('ASR服务未配置');
-    }
-    
-    // 初始化Provider
-    await asrProvider.initialize();
-    
-    // 启动流式识别
-    const session = await asrProvider.startStreamingRecognition(sessionId, {
-      onResult: (result) => {
-        ws.send(JSON.stringify({
-          type: 'speech_result',
-          sessionId: sessionId,
-          resultType: 'partial',
-          text: result.text,
-          confidence: result.confidence
-        }));
-      },
-      onFinal: (result) => {
-        ws.send(JSON.stringify({
-          type: 'speech_result',
-          sessionId: sessionId,
-          resultType: 'final',
-          text: result.text,
-          confidence: result.confidence
-        }));
-      },
-      onError: (error) => {
-        ws.send(JSON.stringify({
-          type: 'speech_result',
-          sessionId: sessionId,
-          resultType: 'error',
-          error: error.message
-        }));
-      },
-      onStateChange: (state) => {
-        console.log(`ASR会话状态变化 [${sessionId}]: ${state}`);
-      }
+    timer.mark('流式响应处理完成', { 
+      totalTokens: tokenCount,
+      responseLength: assistantResponse.length 
     });
     
-    // 保存会话到全局映射
-    if (!global.asrSessions) {
-      global.asrSessions = new Map();
-    }
-    global.asrSessions.set(sessionId, session);
+    // 10. 保存助手响应
+    history.push({ role: "assistant", content: assistantResponse });
     
-    console.log(`✅ ASR会话已保存到global.asrSessions: ${sessionId}`);
-    console.log(`当前global会话数: ${global.asrSessions.size}`);
+    // 11. 限制历史长度
+    if (history.length > 10) {
+      const systemMessage = history.find(msg => msg.role === 'system');
+      const recentHistory = history.slice(-9);
+      history = systemMessage ? [systemMessage, ...recentHistory] : recentHistory;
+      
+      historyData.messages = history;
+      timer.mark('历史记录裁剪完成');
+    }
+    
+    // 12. 异步保存历史
+    userDataService.updateChatHistory(userId, history)
+      .then(() => timer.mark('历史记录持久化完成'))
+      .catch(error => {
+        console.error('保存历史失败:', error);
+        timer.mark('历史记录持久化失败', { error: error.message });
+      });
+    
+    // 13. 获取建议问题
+    timer.mark('开始获取建议问题');
+    const suggestions = await suggestionService.generateSuggestions(
+      history,
+      assistantResponse
+    );
+    timer.mark('建议问题获取完成', { suggestionCount: suggestions.length });
+    
+    // 14. 发送完成消息
+    ws.send(JSON.stringify({ 
+      done: true,
+      suggestions: suggestions,
+      timing: timer.getReport()
+    }));
+    
+    // 最终报告
+    const report = timer.getReport();
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`[${requestId}] ✅ 请求处理完成`);
+    console.log(`总耗时: ${report.totalTime}ms`);
+    console.log(`TTFT: ${report.marks.find(m => m.label.includes('TTFT'))?.elapsed || 'N/A'}ms`);
+    console.log(`Token数: ${tokenCount}`);
+    console.log(`${'='.repeat(60)}\n`);
     
   } catch (error) {
-    console.error('处理语音识别开始错误:', error);
-    ws.send(JSON.stringify({
-      type: 'speech_result',
-      sessionId: data.sessionId,
-      resultType: 'error',
-      error: error.message || '启动语音识别失败'
+    timer.mark('错误发生', { error: error.message });
+    console.error('处理消息时出错:', error);
+    
+    ErrorHandler.handleWebSocketError(ws, error, 'Chat');
+  }
+};
+
+// 其他导出函数保持不变
+exports.sendGreeting = async (ws, userInfo = {}) => {
+  const timer = new PerformanceTimer(`greeting_${Date.now()}`);
+  
+  try {
+    const userId = getUserId(ws);
+    timer.mark('开始生成问候语');
+    
+    const userData = await userDataService.getUserData(userId);
+    timer.mark('用户数据获取完成');
+    
+    const greeting = await greetingService.generateGreeting(userId, userData, userInfo);
+    timer.mark('问候语生成完成');
+    
+    ws.send(JSON.stringify({ 
+      greeting,
+      userInfo: userData?.userInfo || {},
+      timing: timer.getReport()
+    }));
+    
+    const suggestions = await suggestionService.getInitialSuggestions();
+    timer.mark('初始建议获取完成');
+    
+    ws.send(JSON.stringify({ 
+      suggestions,
+      timing: timer.getReport()
+    }));
+    
+  } catch (error) {
+    console.error('生成问候语失败:', error);
+    ws.send(JSON.stringify({ 
+      greeting: "您好！我是杨院长，很高兴为您提供专业的整形美容咨询服务。请问有什么可以帮助您的？",
+      timing: timer.getReport()
     }));
   }
 };
 
-/**
- * 处理流式语音帧数据
- */
+// Stub functions to make index.js work
+exports.handleConnection = async (ws) => {
+  console.log('🔗 WebSocket connection handled');
+};
+
+exports.handleDisconnect = async (ws) => {
+  console.log('🔌 WebSocket disconnection handled');
+};
+
+// 存储语音识别会话
+const speechSessions = new Map();
+
+exports.handleStreamingSpeechStart = async (ws, data) => {
+  console.log('🎤 开始语音识别会话:', data.sessionId);
+  console.log('音频配置:', JSON.stringify(data.config || {}, null, 2));
+
+  try {
+    // 初始化会话数据
+    speechSessions.set(data.sessionId, {
+      ws: ws,
+      userId: ws.userId,
+      audioChunks: [],
+      startTime: Date.now(),
+      config: data.config || {},
+      totalBytes: 0
+    });
+
+    console.log('✅ 语音识别会话初始化成功:', data.sessionId);
+
+    // 发送确认消息给前端
+    ws.send(JSON.stringify({
+      type: 'speech_status',
+      sessionId: data.sessionId,
+      status: 'started',
+      message: '语音识别会话已启动'
+    }));
+
+  } catch (error) {
+    console.error('初始化语音识别会话失败:', error);
+    ws.send(JSON.stringify({
+      type: 'speech_result',
+      sessionId: data.sessionId,
+      error: '语音识别初始化失败'
+    }));
+  }
+};
+
 exports.handleStreamingSpeechFrame = async (ws, data) => {
-  try {
-    const { sessionId, audio, size } = data;
-    
-    if (!sessionId || !audio) {
+  const session = speechSessions.get(data.sessionId);
+  if (!session) {
+    console.error('未找到语音识别会话:', data.sessionId);
+    return;
+  }
+
+  // 收集音频数据
+  if (data.audio) {
+    // 将base64字符串转换为Buffer
+    let audioBuffer;
+    if (typeof data.audio === 'string') {
+      audioBuffer = Buffer.from(data.audio, 'base64');
+    } else if (Buffer.isBuffer(data.audio)) {
+      audioBuffer = data.audio;
+    } else {
+      console.error('不支持的音频数据格式:', typeof data.audio);
       return;
     }
-    
-    // 从全局映射获取会话
-    const session = global.asrSessions?.get(sessionId);
-    if (!session) {
-      console.warn(`❌ ASR会话 ${sessionId} 不存在于global.asrSessions`);
-      return;
+
+    session.audioChunks.push(audioBuffer);
+    session.totalBytes += audioBuffer.length;
+
+    // 每5帧输出一次统计，避免日志过多
+    if (session.audioChunks.length % 5 === 0) {
+      console.log(`收到音频帧: ${audioBuffer.length} 字节, 总计: ${session.audioChunks.length} 帧, 累计: ${session.totalBytes} 字节`);
     }
-    
-    // 根据配置获取ASR Provider
-    const ProviderFactory = require('../services/ProviderFactory');
-    const asrProvider = ProviderFactory.getASRProvider();
-    
-    // 检查Provider内部会话状态
-    const providerSession = asrProvider.sessions?.get(sessionId);
-    if (!providerSession) {
-      console.warn(`❌ ASR会话 ${sessionId} 不存在于Provider内部sessions，清理global映射`);
-      global.asrSessions.delete(sessionId);
-      return;
-    }
-    
-    if (providerSession.state !== 'connected') {
-      console.warn(`❌ ASR会话 ${sessionId} 状态异常: ${providerSession.state}，清理会话`);
-      global.asrSessions.delete(sessionId);
-      asrProvider.sessions.delete(sessionId);
-      return;
-    }
-    
-    // 将Base64音频数据转换为Buffer并处理
-    const audioBuffer = Buffer.from(audio, 'base64');
-    console.log(`🎵 处理音频帧: ${sessionId}, 数据大小: ${audioBuffer.length}`);
-    await asrProvider.processAudioFrame(sessionId, audioBuffer);
-    
-  } catch (error) {
-    console.error('处理语音帧错误:', error);
-    // 不发送错误，避免影响识别流程
   }
 };
 
-/**
- * 处理流式语音识别结束
- */
 exports.handleStreamingSpeechEnd = async (ws, data) => {
+  console.log('🛑 结束语音识别会话:', data.sessionId);
+
+  const session = speechSessions.get(data.sessionId);
+  if (!session) {
+    console.error('未找到语音识别会话:', data.sessionId);
+    return;
+  }
+
   try {
-    const { sessionId } = data;
-    
-    if (!sessionId) {
+    // 合并所有音频数据
+    const totalAudioSize = session.audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    console.log(`合并音频数据: ${session.audioChunks.length} 帧, 总大小: ${totalAudioSize} 字节`);
+
+    if (totalAudioSize === 0) {
+      console.log('没有音频数据，跳过识别');
+      ws.send(JSON.stringify({
+        type: 'speech_result',
+        sessionId: data.sessionId,
+        text: '',
+        message: '没有检测到音频'
+      }));
+      speechSessions.delete(data.sessionId);
       return;
     }
-    
-    console.log(`🛑 [${sessionId}] 结束流式语音识别`);
-    
-    // 根据配置获取ASR Provider
-    const ProviderFactory = require('../services/ProviderFactory');
-    const asrProvider = ProviderFactory.getASRProvider();
-    
-    // 结束语音识别会话
-    await asrProvider.endStreamingRecognition(sessionId);
-    
-    // 从全局映射中移除会话
-    if (global.asrSessions) {
-      global.asrSessions.delete(sessionId);
+
+    // 验证所有音频块都是Buffer
+    const validChunks = session.audioChunks.filter(chunk => Buffer.isBuffer(chunk));
+    if (validChunks.length !== session.audioChunks.length) {
+      console.warn(`过滤掉 ${session.audioChunks.length - validChunks.length} 个无效的音频块`);
     }
-    
-  } catch (error) {
-    console.error('处理语音识别结束错误:', error);
+
+    // 合并音频buffer
+    const combinedAudio = Buffer.concat(validChunks);
+    console.log(`开始Azure语音识别, 音频大小: ${combinedAudio.length} 字节`);
+
+    // 使用Azure Speech Services进行识别
+    const recognizedText = await performAzureSpeechRecognition(combinedAudio);
+
+    console.log('✅ 语音识别完成:', recognizedText);
+
+    // 发送识别结果
     ws.send(JSON.stringify({
       type: 'speech_result',
       sessionId: data.sessionId,
-      resultType: 'error',
-      error: '结束语音识别失败'
+      text: recognizedText,
+      success: true
     }));
+
+    // 🔥 通知前端显示语音消息并直接发送给LLM
+    if (recognizedText && recognizedText.trim()) {
+      console.log('🤖 通知前端显示语音消息并发送给LLM:', recognizedText.trim());
+
+      // 立即发送语音消息给前端显示
+      ws.send(JSON.stringify({
+        type: 'voice_message_display',
+        text: recognizedText.trim(),
+        sessionId: data.sessionId
+      }));
+
+      // 立即调用LLM处理
+      exports.sendMessage(ws, recognizedText.trim());
+    }
+
+  } catch (error) {
+    console.error('语音识别失败:', error);
+    ws.send(JSON.stringify({
+      type: 'speech_result',
+      sessionId: data.sessionId,
+      error: '语音识别失败: ' + error.message
+    }));
+  } finally {
+    // 清理会话
+    speechSessions.delete(data.sessionId);
   }
 };
 
-/**
- * 处理流式语音识别取消
- */
 exports.handleStreamingSpeechCancel = async (ws, data) => {
-  try {
-    const { sessionId } = data;
-    
-    if (!sessionId) {
-      return;
-    }
-    
-    console.log(`❌ [${sessionId}] 取消流式语音识别`);
-    
-    // 根据配置获取ASR Provider
-    const ProviderFactory = require('../services/ProviderFactory');
-    const asrProvider = ProviderFactory.getASRProvider();
-    
-    // 取消语音识别会话（不发送最终结果）
-    await asrProvider.cancelStreamingRecognition(sessionId);
-    
-    // 从全局映射中移除会话
-    if (global.asrSessions) {
-      global.asrSessions.delete(sessionId);
-    }
-    
-    // 发送取消确认
-    ws.send(JSON.stringify({
-      type: 'speech_result',
-      sessionId: sessionId,
-      resultType: 'canceled',
-      text: ''
-    }));
-    
-  } catch (error) {
-    console.error('处理语音识别取消错误:', error);
-    ws.send(JSON.stringify({
-      type: 'speech_result',
-      sessionId: data.sessionId,
-      resultType: 'error',
-      error: '取消语音识别失败'
-    }));
-  }
+  console.log('🚫 取消语音识别会话:', data.sessionId);
+  speechSessions.delete(data.sessionId);
 };
+
+// Azure Speech Services 语音识别函数
+async function performAzureSpeechRecognition(audioBuffer) {
+  const sdk = require('microsoft-cognitiveservices-speech-sdk');
+
+  // 从环境变量获取Azure Speech配置
+  const speechKey = process.env.AZURE_SPEECH_KEY;
+  const speechRegion = process.env.AZURE_SPEECH_REGION || 'koreacentral';
+  const language = process.env.AZURE_SPEECH_LANGUAGE || 'zh-CN';
+
+  if (!speechKey) {
+    throw new Error('Azure Speech Key未配置');
+  }
+
+  console.log(`使用Azure Speech Services: region=${speechRegion}, language=${language}`);
+
+  return new Promise((resolve, reject) => {
+    let isResolved = false;
+    let recognizer = null;
+
+    try {
+      // 创建语音配置
+      const speechConfig = sdk.SpeechConfig.fromSubscription(speechKey, speechRegion);
+      speechConfig.speechRecognitionLanguage = language;
+
+      // 创建音频配置
+      const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
+      const audioStream = sdk.AudioInputStream.createPushStream(audioFormat);
+      const audioConfig = sdk.AudioConfig.fromStreamInput(audioStream);
+
+      // 创建识别器
+      recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+
+      // 安全关闭函数
+      const safeClose = () => {
+        if (recognizer && !isResolved) {
+          try {
+            recognizer.close();
+          } catch (e) {
+            console.warn('识别器关闭时出现警告:', e.message);
+          }
+        }
+      };
+
+      // 设置识别事件
+      recognizer.recognized = (s, e) => {
+        if (isResolved) return;
+
+        if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
+          console.log(`Azure识别结果: "${e.result.text}"`);
+          isResolved = true;
+          safeClose();
+          resolve(e.result.text);
+        } else if (e.result.reason === sdk.ResultReason.NoMatch) {
+          console.log('Azure未识别到语音内容');
+          isResolved = true;
+          safeClose();
+          resolve('');
+        }
+      };
+
+      recognizer.canceled = (s, e) => {
+        if (isResolved) return;
+
+        console.error('Azure识别被取消:', e.errorDetails);
+        isResolved = true;
+        safeClose();
+        reject(new Error(`识别被取消: ${e.errorDetails}`));
+      };
+
+      recognizer.sessionStopped = (s, e) => {
+        console.log('Azure识别会话结束');
+        // 不在这里关闭，让其他事件处理
+      };
+
+      // 写入音频数据
+      audioStream.write(audioBuffer);
+      audioStream.close();
+
+      // 开始识别
+      console.log('开始Azure语音识别...');
+      recognizer.recognizeOnceAsync();
+
+      // 设置超时
+      setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          safeClose();
+          reject(new Error('语音识别超时'));
+        }
+      }, 10000);
+
+    } catch (error) {
+      console.error('Azure语音识别初始化失败:', error);
+      isResolved = true;
+      reject(error);
+    }
+  });
+}

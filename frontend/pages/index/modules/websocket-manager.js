@@ -205,6 +205,32 @@ class WebSocketManager {
       this.page.streamingSpeechManager.handleResult(data);
       return;
     }
+
+    // 处理语音消息显示
+    if (data.type === 'voice_message_display') {
+      console.log('🎤 收到语音消息显示请求:', data.text);
+
+      // 创建用户消息
+      const userMessage = this.page.messageManager.createUserMessage(data.text);
+      // 创建加载消息（"正在生成"提示）
+      const loadingMessage = this.page.messageManager.createLoadingMessage();
+
+      // 添加到消息列表并设置状态
+      this.page.setData({
+        messages: this.page.data.messages.concat([userMessage, loadingMessage]),
+        isConnecting: true,
+        isGenerating: true,
+        // 关闭语音UI
+        showVoiceModal: false,
+        isInputRecording: false,
+        isRecording: false,
+        isStreamingSpeech: false
+      }, () => {
+        this.page.scrollController.scrollToBottom(true);
+      });
+
+      return;
+    }
     
     // 处理建议问题消息
     if (data.type === 'suggestions') {

@@ -648,6 +648,21 @@
   gap: 32rpx;
 }
 
+/* AI免责声明文本 - 放在最底部 */
+.disclaimer-text {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: #999;
+  padding: 8rpx 0 30rpx 0; /* 增加底部内边距到30rpx，避免被小程序底部横线遮挡 */
+  background-color: #f8f8f8;
+  border-top: 1px solid #e5e5e5;
+  z-index: 50; /* 低于输入框和其他UI元素 */
+}
+
 /* 麦克风图标区域 */
 .streaming-speech-icon {
   position: relative;
