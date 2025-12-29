@@ -1,32 +1,11 @@
-const { AzureOpenAI } = require("openai");
+const AzureClientFactory = require('../utils/AzureClientFactory');
 
 class NameExtractorService {
-  constructor() {
-    this.endpoint = process.env.AZURE_OPENAI_ENDPOINT;
-    this.apiKey = process.env.AZURE_OPENAI_API_KEY;
-    this.apiVersion = process.env.OPENAI_API_VERSION;
-    this.deployment = process.env.AZURE_OPENAI_DEPLOYMENT_NAME;
-  }
-  
-  validateConfig() {
-    if (!this.endpoint || !this.apiKey || !this.apiVersion || !this.deployment) {
-      console.error('Azure OpenAI configuration missing for NameExtractorService');
-      throw new Error('Azure OpenAI credentials not configured');
-    }
-  }
-
   async extractNameFromConversation(messages) {
     try {
-      // 验证配置
-      this.validateConfig();
-      
-      // 创建 Azure OpenAI 客户端
-      const client = new AzureOpenAI({
-        apiKey: this.apiKey,
-        endpoint: this.endpoint,
-        apiVersion: this.apiVersion,
-        deployment: this.deployment,
-      });
+      // 验证配置并获取客户端
+      AzureClientFactory.validateConfig();
+      const client = AzureClientFactory.getClient();
 
       // 构建提取名字的提示
       const conversationContext = messages
@@ -53,7 +32,7 @@ class NameExtractorService {
 - "我想咨询一下" -> {"name": null}`;
 
       const response = await client.chat.completions.create({
-        model: "gpt-4o",
+        model: AzureClientFactory.getDeploymentName(),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: `请从以下对话中提取用户的名字：\n\n${conversationContext}` }

@@ -1,10 +1,10 @@
-const { AzureOpenAI } = require("openai");
 const userDataService = require('../services/userDataService');
 const greetingService = require('../services/greetingService');
 const nameExtractorService = require('../services/nameExtractorService');
 const promptService = require('../services/promptService');
 const suggestionService = require('../services/suggestionService');
 const ErrorHandler = require('../middleware/errorHandler');
+const AzureClientFactory = require('../utils/AzureClientFactory');
 
 // Provider支持
 const ConfigService = require('../services/ConfigService');
@@ -51,20 +51,6 @@ class PerformanceTimer {
 // 环境变量读取辅助函数
 function getEnvVar(name) {
   return process.env[name] || process.env[`APPSETTING_${name}`] || null;
-}
-
-// 从环境变量中获取 LLM 配置
-const endpoint = getEnvVar('AZURE_OPENAI_ENDPOINT');
-const apiKey = getEnvVar('AZURE_OPENAI_API_KEY');
-const apiVersion = getEnvVar('OPENAI_API_VERSION');
-const deployment = getEnvVar('AZURE_OPENAI_DEPLOYMENT_NAME');
-
-// 验证配置的函数
-function validateAzureConfig() {
-  if (!endpoint || !apiKey || !apiVersion || !deployment) {
-    console.error('LLM configuration missing. Please check environment variables.');
-    throw new Error('LLM credentials not configured');
-  }
 }
 
 // 使用 userId 作为 key 来存储对话历史
@@ -149,7 +135,7 @@ exports.sendMessage = async (ws, prompt) => {
     if (useProvider) {
       console.log(`使用 ${ConfigService.getProviderType()} Provider`);
     } else {
-      validateAzureConfig();
+      AzureClientFactory.validateConfig();
       console.log('Azure配置验证通过');
     }
     timer.mark('配置验证完成');
@@ -248,17 +234,13 @@ exports.sendMessage = async (ws, prompt) => {
       });
       timer.mark('Provider流创建完成');
     } else {
-      // Azure模式
-      const client = new AzureOpenAI({
-        apiKey,
-        endpoint,
-        apiVersion,
-        deployment,
-      });
+      // Azure模式 - 使用工厂类获取客户端
+      AzureClientFactory.validateConfig();
+      const client = AzureClientFactory.getClient();
       timer.mark('Azure客户端创建完成');
-      
+
       stream = await client.chat.completions.create({
-        model: deployment,
+        model: AzureClientFactory.getDeploymentName(),
         messages: history,
         stream: true,
         max_tokens: 2000,
