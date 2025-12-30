@@ -16,6 +16,7 @@
     "@azure/core-auth": "^1.9.0",
     "@azure/identity": "^4.6.0",
     "@azure/openai": "^2.0.0",
+    "@azure/storage-blob": "^12.29.1",
     "@memobase/memobase": "npm:@jsr/memobase__memobase@^0.0.18",
     "@supabase/supabase-js": "^2.89.0",
     "axios": "^1.7.9",

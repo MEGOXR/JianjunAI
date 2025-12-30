@@ -335,6 +335,46 @@ class WebSocketManager {
     }
 
     try {
+      // 检查连接状态
+      if (this.socketTask.readyState !== 1) {
+        console.error('WebSocket 连接未就绪，readyState:', this.socketTask.readyState);
+
+        // 如果正在连接中(readyState === 0)，等待连接建立
+        if (this.socketTask.readyState === 0) {
+          console.log('WebSocket 正在连接中，等待连接建立后重试...');
+
+          // 等待最多3秒
+          const maxWaitTime = 3000;
+          const startTime = Date.now();
+          const checkInterval = 100;
+
+          const waitForConnection = () => {
+            if (this.socketTask && this.socketTask.readyState === 1) {
+              // 连接已建立，发送消息
+              this.socketTask.send({
+                data: JSON.stringify(data)
+              });
+              console.log('WebSocket 连接建立，消息已发送');
+            } else if (Date.now() - startTime < maxWaitTime) {
+              // 继续等待
+              setTimeout(waitForConnection, checkInterval);
+            } else {
+              // 超时
+              console.error('等待 WebSocket 连接超时');
+              wx.showToast({
+                title: '连接超时，请重试',
+                icon: 'none'
+              });
+            }
+          };
+
+          setTimeout(waitForConnection, checkInterval);
+          return true; // 返回 true 表示正在处理
+        }
+
+        return false;
+      }
+
       this.socketTask.send({
         data: JSON.stringify(data)
       });

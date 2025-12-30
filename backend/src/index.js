@@ -159,11 +159,10 @@ const warmupLLMConnection = async () => {
     const ProviderFactory = require('./services/ProviderFactory');
     
     const provider = ProviderFactory.getLLMProvider();
-    
+
     // 发送一个简单的请求来预热连接
     const response = await provider.createCompletion('测试连接', {
-      max_tokens: 5,
-      temperature: 0
+      max_completion_tokens: 5  // 使用正确的 API 参数名
     });
     
     console.log('✅ LLM连接预热成功');
@@ -176,6 +175,16 @@ const warmupLLMConnection = async () => {
 setTimeout(() => {
   warmupLLMConnection();
 }, 5000); // 延迟5秒启动，避免影响服务器启动速度
+
+// 初始化 Azure Blob Storage 服务（图片存储）
+const azureBlobService = require('./services/azureBlobService');
+azureBlobService.initialize()
+  .then(() => {
+    console.log('✅ Azure Blob Storage 初始化完成');
+  })
+  .catch(err => {
+    console.warn('⚠️ Azure Blob Storage 初始化失败（图片上传功能将被禁用）:', err.message);
+  });
 
 // 初始化记忆服务（Supabase + Memobase）
 memoryService.initialize()
@@ -379,21 +388,28 @@ wss.on('connection', async (ws, req) => {
       }
 
 
-      // 只有当有 prompt 时才发送消息
-      if (data.prompt) {
+      // 只有当有 prompt 或图片时才发送消息
+      if (data.prompt || data.images) {
         // 检查速率限制（仅对聊天消息进行限制）
         if (!SecurityMiddleware.checkRateLimit(ws.userId, 60000, 30)) { // 每分钟30条消息
-          ws.send(JSON.stringify({ 
+          ws.send(JSON.stringify({
             error: '发送太频繁，请稍后再试',
             details: '每分钟最多30条消息'
           }));
           return;
         }
-        
+
         // 清理输入内容
-        const sanitizedPrompt = SecurityMiddleware.sanitizeMedicalContent(data.prompt);
-        // 调用 Azure OpenAI，返回流式数据
-        await chatController.sendMessage(ws, sanitizedPrompt);
+        const sanitizedPrompt = data.prompt ? SecurityMiddleware.sanitizeMedicalContent(data.prompt) : '';
+
+        // 检查图片数据
+        const images = data.images || [];
+        if (images.length > 0) {
+          console.log(`收到 ${images.length} 张图片`);
+        }
+
+        // 调用 Azure OpenAI，返回流式数据（支持 Vision API）
+        await chatController.sendMessage(ws, sanitizedPrompt, images);
       }
     } catch (error) {
       console.error('WebSocket 错误:', error);

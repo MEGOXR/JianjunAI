@@ -42,14 +42,31 @@ npm run dev         # Development mode with nodemon
 
 Backend requires `.env` file with:
 ```
+# Azure OpenAI (Required)
 AZURE_OPENAI_ENDPOINT=<your-endpoint>
 AZURE_OPENAI_API_KEY=<your-api-key>
 OPENAI_API_VERSION=<api-version>
 AZURE_OPENAI_DEPLOYMENT_NAME=<deployment-name>
+
+# Azure Blob Storage (Required for image upload)
+AZURE_STORAGE_CONNECTION_STRING=<your-connection-string>
+
+# Supabase (Optional - for persistent storage)
+SUPABASE_URL=<your-supabase-url>
+SUPABASE_ANON_KEY=<your-supabase-key>
+USE_SUPABASE=true
+
+# Memobase (Optional - for user memory)
+MEMOBASE_PROJECT_URL=<your-memobase-url>
+MEMOBASE_API_KEY=<your-memobase-key>
+USE_MEMOBASE=true
+
+# Server
 PORT=3000
+JWT_SECRET=<your-jwt-secret>
 ```
 
-**Security Note**: All environment variables are required. The application will fail to start if any Azure OpenAI credentials are missing.
+**Security Note**: Azure OpenAI and Azure Blob Storage credentials are required. The application will fail to start if these are missing. Supabase and Memobase are optional but recommended for full functionality.
 
 ## Key Implementation Details
 
@@ -73,6 +90,21 @@ PORT=3000
 - **NameExtractorService** (`backend/src/services/nameExtractorService.js`): Uses LLM to intelligently extract user names from conversation
 - User data includes: chat history, last visit time, extracted names, WeChat nickname
 - Name extraction uses GPT-4 with JSON response format for accurate identification
+
+### Image Upload & Storage
+- **AzureBlobService** (`backend/src/services/azureBlobService.js`): Handles image uploads to Azure Blob Storage
+- **Frontend**: Image selection, compression (max 1024x1024), and base64 conversion
+- **Upload Flow**:
+  1. User selects/takes photos (max 3 images)
+  2. Frontend compresses and converts to base64
+  3. Backend uploads to Azure Blob Storage
+  4. GPT-5.2 Vision API analyzes images
+  5. Image URLs + AI analysis saved to Supabase
+  6. AI analysis results saved to Memobase for user memory
+- **Storage Structure**:
+  - Azure Blob: `user-images/{userId}/{timestamp}_{randomId}.jpg`
+  - Supabase: Image metadata + analysis in `chat_messages.metadata`
+  - Memobase: Formatted analysis summary in user memory
 
 ### Frontend State Management
 - Messages stored in component data with real-time updates

@@ -351,6 +351,118 @@ class SupabaseService {
     }));
   }
 
+  // ==================== 图片操作 ====================
+
+  /**
+   * 保存带图片的用户消息
+   * @param {string} sessionId - 会话ID
+   * @param {string} userUuid - 用户UUID
+   * @param {string} textContent - 文本内容
+   * @param {Array} imageUrls - 图片信息数组 [{ url, blobName, size, containerName }]
+   * @param {string} imageAnalysis - AI 图片分析结果（可选）
+   * @returns {object} 消息数据
+   */
+  async saveMessageWithImages(sessionId, userUuid, textContent, imageUrls, imageAnalysis = null) {
+    if (!this.isAvailable()) {
+      throw new Error('Supabase service not available');
+    }
+
+    const metadata = {
+      images: imageUrls
+    };
+
+    if (imageAnalysis) {
+      metadata.imageAnalysis = imageAnalysis;
+    }
+
+    return await this.saveMessage(sessionId, userUuid, 'user', textContent, metadata);
+  }
+
+  /**
+   * 获取用户上传的图片总数
+   * @param {string} wechatOpenId - 微信OpenID
+   * @returns {number} 图片消息总数
+   */
+  async getUserImageCount(wechatOpenId) {
+    if (!this.isAvailable()) return 0;
+
+    const user = await this.getUserByWechatId(wechatOpenId);
+    if (!user) return 0;
+
+    try {
+      const { data, error } = await this.client.rpc('get_user_image_count', {
+        p_user_id: user.uuid
+      });
+
+      if (error) throw error;
+      return data || 0;
+    } catch (error) {
+      console.warn('[Supabase] 获取图片数量失败，使用备选方法:', error.message);
+
+      // 备选方法：直接查询
+      const { count, error: countError } = await this.client
+        .from('chat_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.uuid)
+        .eq('role', 'user')
+        .not('metadata->images', 'is', null);
+
+      if (countError) {
+        console.error('[Supabase] 备选查询失败:', countError);
+        return 0;
+      }
+
+      return count || 0;
+    }
+  }
+
+  /**
+   * 获取用户最近上传的图片
+   * @param {string} wechatOpenId - 微信OpenID
+   * @param {number} limit - 数量限制
+   * @returns {Array} 图片信息列表
+   */
+  async getUserRecentImages(wechatOpenId, limit = 10) {
+    if (!this.isAvailable()) return [];
+
+    const user = await this.getUserByWechatId(wechatOpenId);
+    if (!user) return [];
+
+    try {
+      const { data, error } = await this.client.rpc('get_user_recent_images', {
+        p_user_id: user.uuid,
+        p_limit: limit
+      });
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      console.warn('[Supabase] 获取最近图片失败，使用备选方法:', error.message);
+
+      // 备选方法：直接查询
+      const { data, error: queryError } = await this.client
+        .from('chat_messages')
+        .select('id, metadata, created_at')
+        .eq('user_id', user.uuid)
+        .eq('role', 'user')
+        .not('metadata->images', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (queryError) {
+        console.error('[Supabase] 备选查询失败:', queryError);
+        return [];
+      }
+
+      return (data || []).map(msg => ({
+        message_id: msg.id,
+        image_urls: (msg.metadata?.images || []).map(img => img.url),
+        created_at: msg.created_at,
+        image_analysis: msg.metadata?.imageAnalysis
+      }));
+    }
+  }
+
   // ==================== 用户洞察操作 ====================
 
   /**
@@ -413,6 +525,56 @@ class SupabaseService {
   // ==================== 辅助方法 ====================
 
   /**
+   * 获取用户的 Memobase 用户 ID
+   * @param {string} wechatOpenId - 微信OpenID
+   * @returns {string|null} Memobase 用户 ID
+   */
+  async getMemobaseUserId(wechatOpenId) {
+    if (!this.isAvailable()) return null;
+
+    const { data, error } = await this.client
+      .from('users')
+      .select('memobase_user_id')
+      .eq('wechat_open_id', wechatOpenId)
+      .single();
+
+    if (error) {
+      console.error('[Supabase] 获取 Memobase 用户 ID 失败:', error);
+      return null;
+    }
+
+    return data?.memobase_user_id || null;
+  }
+
+  /**
+   * 保存用户的 Memobase 用户 ID
+   * @param {string} wechatOpenId - 微信OpenID
+   * @param {string} memobaseUserId - Memobase 用户 UUID
+   * @returns {boolean} 是否成功
+   */
+  async saveMemobaseUserId(wechatOpenId, memobaseUserId) {
+    if (!this.isAvailable()) return false;
+
+    try {
+      const { error } = await this.client
+        .from('users')
+        .update({ memobase_user_id: memobaseUserId })
+        .eq('wechat_open_id', wechatOpenId);
+
+      if (error) {
+        console.error('[Supabase] 保存 Memobase 用户 ID 失败:', error);
+        return false;
+      }
+
+      console.log(`[Supabase] Memobase 用户 ID 已保存: ${wechatOpenId} -> ${memobaseUserId}`);
+      return true;
+    } catch (err) {
+      console.error('[Supabase] 保存 Memobase 用户 ID 异常:', err);
+      return false;
+    }
+  }
+
+  /**
    * 转换用户数据格式（Supabase -> 应用格式）
    */
   _transformUser(dbUser) {
@@ -423,6 +585,7 @@ class SupabaseService {
       userId: dbUser.wechat_open_id,
       nickname: dbUser.nickname,
       extractedName: dbUser.extracted_name,
+      memobaseUserId: dbUser.memobase_user_id,
       createdAt: dbUser.created_at,
       lastVisit: dbUser.last_visit,
       totalSessions: dbUser.total_sessions,

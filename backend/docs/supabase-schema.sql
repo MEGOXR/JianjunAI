@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   wechat_open_id VARCHAR(100) UNIQUE NOT NULL,
   nickname VARCHAR(100),
   extracted_name VARCHAR(50),
+  memobase_user_id VARCHAR(100) UNIQUE,  -- Memobase 用户 UUID，持久化映射
   created_at TIMESTAMPTZ DEFAULT NOW(),
   last_visit TIMESTAMPTZ DEFAULT NOW(),
   total_sessions INT DEFAULT 0,
@@ -16,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE INDEX IF NOT EXISTS idx_users_wechat_open_id ON users(wechat_open_id);
 CREATE INDEX IF NOT EXISTS idx_users_last_visit ON users(last_visit);
+CREATE INDEX IF NOT EXISTS idx_users_memobase_user_id ON users(memobase_user_id);
 
 -- 会话表
 CREATE TABLE IF NOT EXISTS chat_sessions (

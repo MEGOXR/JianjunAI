@@ -19,7 +19,21 @@
       <!-- 用户消息 -->
       <view class="message-item" id="msg-{{index}}" wx:if="{{item.role === 'user'}}">
         <view class="user-message">
-          <text user-select="true">{{item.content}}</text>
+          <!-- 图片显示 -->
+          <view wx:if="{{item.images && item.images.length > 0}}" class="message-images">
+            <view wx:for="{{item.images}}" wx:key="*this" wx:for-item="imgUrl" class="message-image-wrapper">
+              <image
+                src="{{imgUrl}}"
+                mode="aspectFill"
+                class="message-image"
+                bindtap="previewMessageImage"
+                data-current="{{imgUrl}}"
+                data-urls="{{item.images}}"
+              />
+            </view>
+          </view>
+          <!-- 文字内容 -->
+          <text wx:if="{{item.content}}" user-select="true">{{item.content}}</text>
         </view>
       </view>
 
@@ -72,17 +86,63 @@
   <!-- AI 免责声明 -->
   <view class="disclaimer-text">内容由AI生成，仅供参考</view>
   
-  <!-- 文字输入模式 -->
-  <view class="input-area {{showVoiceModal ? 'hidden' : ''}}" wx:if="{{!isVoiceMode}}">
-    <view class="input-container">
-      <view class="input-wrapper"
+  <!-- 图片预览区域 - 豆包风格 -->
+  <view class="image-preview-container-new" wx:if="{{selectedImages.length > 0 || uploadingImages.length > 0}}">
+    <view class="image-grid">
+      <!-- 上传中的图片 -->
+      <view wx:for="{{uploadingImages}}" wx:key="index" class="image-grid-item uploading">
+        <image src="{{item.path}}" mode="aspectFill" class="grid-image"/>
+        <view class="upload-loading">
+          <view class="loading-ring"></view>
+        </view>
+      </view>
+
+      <!-- 已上传的图片 -->
+      <view wx:for="{{selectedImages}}" wx:key="index" class="image-grid-item">
+        <image src="{{item}}" mode="aspectFill" class="grid-image"/>
+        <view class="remove-image-btn-new" bindtap="removeImage" data-index="{{index}}">
+          <text class="remove-icon-new">×</text>
+        </view>
+      </view>
+
+      <!-- 添加更多按钮 -->
+      <view wx:if="{{selectedImages.length < 3}}" class="image-grid-item add-more" bindtap="showImageSourcePicker">
+        <text class="add-icon">+</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 相机/相册选择弹窗 -->
+  <view class="image-source-modal" wx:if="{{showImageSourceModal}}" bindtap="hideImageSourcePicker">
+    <view class="image-source-content" catchtap="stopPropagation">
+      <view class="source-option" bindtap="openCamera">
+        <image class="source-icon" src="/images/camera-icon.svg"/>
+        <text class="source-text">相机</text>
+      </view>
+      <view class="source-option" bindtap="openAlbum">
+        <image class="source-icon" src="/images/album-icon.svg"/>
+        <text class="source-text">相册</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 文字输入模式 - 豆包风格 -->
+  <view class="input-area-new {{showVoiceModal ? 'hidden' : ''}}" wx:if="{{!isVoiceMode}}">
+    <view class="input-container-new">
+      <!-- 左侧相机按钮 -->
+      <view class="camera-btn" bindtap="showImageSourcePicker">
+        <image class="camera-icon" src="/images/camera-btn.svg"/>
+      </view>
+
+      <!-- 中间输入框 -->
+      <view class="input-wrapper-new"
             bindtouchstart="onInputTouchStart"
             bindtouchmove="onInputTouchMove"
             bindtouchend="onInputTouchEnd"
             bindtouchcancel="onInputTouchCancel">
         <input
-          class="input-box"
-          placeholder=""
+          class="input-box-new"
+          placeholder="{{keyboardHeight > 0 ? '发消息' : '输入问题或直接发送...'}}"
           bindinput="bindInput"
           bindconfirm="sendMessage"
           bindfocus="handleFocus"
@@ -92,23 +152,24 @@
           confirm-type="send"
           adjust-position="{{true}}"
         />
-        <!-- 自定义 placeholder，当没有输入内容时显示 -->
-        <view wx:if="{{!userInput}}" class="custom-placeholder {{isInputRecording ? 'recording' : ''}}">
-          {{isInputRecording ? recordingText : (keyboardHeight > 0 ? '发消息' : '发消息或按住说话')}}
+      </view>
+
+      <!-- 右侧按钮组 -->
+      <view class="right-buttons">
+        <!-- 语音按钮 -->
+        <view wx:if="{{!userInput && selectedImages.length === 0}}"
+              class="voice-btn-new"
+              bindtap="switchToVoice">
+          <image class="voice-icon" src="/images/voice.png"/>
+        </view>
+
+        <!-- 发送按钮 -->
+        <view wx:if="{{userInput || selectedImages.length > 0}}"
+              class="send-btn-new"
+              bindtap="sendMessage">
+          <image class="send-icon" src="/images/send-arrow.svg"/>
         </view>
       </view>
-      <image 
-        wx:if="{{!userInput}}"
-        class="mode-switch-btn"
-        src="/images/voice.png"
-        bindtap="switchToVoice"
-      />
-      <image 
-        wx:if="{{userInput}}"
-        class="send-btn"
-        src="/images/send.svg"
-        bindtap="sendMessage"
-      />
     </view>
   </view>
 
