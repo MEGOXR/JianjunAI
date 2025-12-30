@@ -3,6 +3,7 @@ const greetingService = require('../services/greetingService');
 const nameExtractorService = require('../services/nameExtractorService');
 const promptService = require('../services/promptService');
 const suggestionService = require('../services/suggestionService');
+const memoryService = require('../services/memoryService');
 const ErrorHandler = require('../middleware/errorHandler');
 const AzureClientFactory = require('../utils/AzureClientFactory');
 
@@ -148,7 +149,17 @@ exports.sendMessage = async (ws, prompt) => {
     timer.mark('开始获取用户数据');
     const userDataPromise = userDataService.getUserData(userId);
     
-    // 4. 初始化或获取对话历史
+    // 4. 获取增强的系统提示词（包含Memobase记忆）
+    timer.mark('开始获取增强系统提示词');
+    let enhancedSystemPrompt = promptService.getSystemPrompt();
+    try {
+      enhancedSystemPrompt = await memoryService.getEnhancedSystemPrompt(userId);
+      timer.mark('增强系统提示词获取完成', { hasMemory: enhancedSystemPrompt.includes('用户记忆档案') });
+    } catch (err) {
+      console.warn('获取增强系统提示词失败，使用默认提示词:', err.message);
+    }
+
+    // 5. 初始化或获取对话历史
     timer.mark('开始初始化对话历史');
     if (!chatHistories.has(userId)) {
       userDataPromise.then(userData => {
@@ -161,20 +172,26 @@ exports.sendMessage = async (ws, prompt) => {
           timer.mark('从存储加载历史记录', { historyLength: savedHistory.length });
         }
       }).catch(console.error);
-      
+
       chatHistories.set(userId, {
         messages: [
           {
             role: "system",
-            content: promptService.getSystemPrompt()
+            content: enhancedSystemPrompt
           }
         ],
         lastAccess: Date.now()
       });
       timer.mark('创建新的对话历史');
+    } else {
+      // 更新现有历史中的系统提示词
+      const historyData = chatHistories.get(userId);
+      if (historyData?.messages?.[0]?.role === 'system') {
+        historyData.messages[0].content = enhancedSystemPrompt;
+      }
     }
     
-    // 5. 更新历史记录
+    // 6. 更新历史记录
     let historyData = chatHistories.get(userId);
     timer.mark('获取对话历史完成', { messageCount: historyData?.messages?.length });
     
@@ -200,10 +217,15 @@ exports.sendMessage = async (ws, prompt) => {
     }
 
     let history = historyData.messages || [];
-    
-    // 6. 添加用户消息
+
+    // 7. 添加用户消息
     history.push({ role: "user", content: prompt });
     timer.mark('用户消息添加完成');
+
+    // 8. 缓冲用户消息到 Memobase（异步，不阻塞）
+    memoryService.processUserMessage(userId, prompt).catch(err => {
+      console.warn('缓冲用户消息到Memobase失败:', err.message);
+    });
 
     // 7. 发送初始化消息
     ws.send(JSON.stringify({ 
@@ -300,8 +322,13 @@ exports.sendMessage = async (ws, prompt) => {
     
     // 10. 保存助手响应
     history.push({ role: "assistant", content: assistantResponse });
-    
-    // 11. 限制历史长度
+
+    // 11. 缓冲助手消息到 Memobase（异步，不阻塞）
+    memoryService.processAssistantMessage(userId, assistantResponse).catch(err => {
+      console.warn('缓冲助手消息到Memobase失败:', err.message);
+    });
+
+    // 12. 限制历史长度
     if (history.length > 10) {
       const systemMessage = history.find(msg => msg.role === 'system');
       const recentHistory = history.slice(-9);
@@ -362,7 +389,7 @@ exports.sendGreeting = async (ws, userInfo = {}) => {
     const userData = await userDataService.getUserData(userId);
     timer.mark('用户数据获取完成');
     
-    const greeting = await greetingService.generateGreeting(userId, userData, userInfo);
+    const greeting = await greetingService.generateGreeting(userData, userId);
     timer.mark('问候语生成完成');
     
     ws.send(JSON.stringify({ 
@@ -388,13 +415,35 @@ exports.sendGreeting = async (ws, userInfo = {}) => {
   }
 };
 
-// Stub functions to make index.js work
+// WebSocket 连接处理
 exports.handleConnection = async (ws) => {
   console.log('🔗 WebSocket connection handled');
+
+  const userId = ws.userId;
+  if (!userId) return;
+
+  // 通知 memoryService 用户已连接
+  try {
+    await memoryService.onUserConnect(userId, {
+      nickname: ws.userNickname || null
+    });
+  } catch (err) {
+    console.warn('记录用户连接失败:', err.message);
+  }
 };
 
 exports.handleDisconnect = async (ws) => {
   console.log('🔌 WebSocket disconnection handled');
+
+  const userId = ws.userId;
+  if (!userId) return;
+
+  // 通知 memoryService 用户已断开（会刷新 Memobase 缓冲）
+  try {
+    await memoryService.onUserDisconnect(userId);
+  } catch (err) {
+    console.warn('记录用户断开失败:', err.message);
+  }
 };
 
 // 存储语音识别会话

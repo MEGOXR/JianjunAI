@@ -12,6 +12,7 @@ const speechRoutes = require('./routes/speechRoutes'); // 导入语音路由
 const cleanupUtil = require('./utils/cleanup'); // 导入清理工具
 const ProviderFactory = require('./services/ProviderFactory'); // 导入Provider工厂
 const ConfigService = require('./services/ConfigService'); // 导入配置服务
+const memoryService = require('./services/memoryService'); // 导入记忆服务
 
 const app = express();
 const port = process.env.PORT || 8080;
@@ -95,6 +96,15 @@ app.get('/health', (req, res) => {
   });
 });
 
+// 记忆服务状态端点
+app.get('/api/memory-status', (req, res) => {
+  const status = memoryService.getStatus();
+  res.json({
+    timestamp: new Date().toISOString(),
+    ...status
+  });
+});
+
 // 版本检查接口 - 确认当前部署的代码版本
 app.get('/api/version', (req, res) => {
   res.json({
@@ -166,6 +176,17 @@ const warmupLLMConnection = async () => {
 setTimeout(() => {
   warmupLLMConnection();
 }, 5000); // 延迟5秒启动，避免影响服务器启动速度
+
+// 初始化记忆服务（Supabase + Memobase）
+memoryService.initialize()
+  .then(() => {
+    console.log('✅ 记忆服务初始化完成');
+    console.log('   Supabase:', process.env.USE_SUPABASE === 'true' ? '已启用' : '已禁用');
+    console.log('   Memobase:', process.env.USE_MEMOBASE === 'true' ? '已启用' : '已禁用');
+  })
+  .catch(err => {
+    console.warn('⚠️ 记忆服务初始化失败（不影响基础功能）:', err.message);
+  });
 
 // 配置检查端点
 app.get('/config-check', (req, res) => {
@@ -398,20 +419,31 @@ wss.on('connection', async (ws, req) => {
 });
 
 // 优雅关闭处理
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
-  heartbeatService.shutdown();
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
-});
+const gracefulShutdown = async (signal) => {
+  console.log(`${signal} received, shutting down gracefully...`);
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully...');
+  // 关闭心跳服务
   heartbeatService.shutdown();
+
+  // 关闭记忆服务（会刷新所有 Memobase 缓冲）
+  try {
+    await memoryService.shutdown();
+  } catch (err) {
+    console.error('记忆服务关闭失败:', err.message);
+  }
+
+  // 关闭 HTTP 服务器
   server.close(() => {
     console.log('Server closed');
     process.exit(0);
   });
-});
+
+  // 设置超时强制退出
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
