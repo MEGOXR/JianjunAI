@@ -1,58 +1,93 @@
 const userDataService = require('./userDataService');
 const promptService = require('./promptService');
-const { AzureOpenAI } = require('openai');
+const AzureClientFactory = require('../utils/AzureClientFactory');
+const memoryService = require('./memoryService');
 
 class GreetingService {
-  constructor() {
-    this.openai = null; // 延迟初始化
-  }
-  
+  /**
+   * 获取 Azure OpenAI 客户端（使用工厂类）
+   */
   getOpenAIClient() {
-    if (!this.openai) {
-      this.openai = new AzureOpenAI({
-        apiKey: process.env.AZURE_OPENAI_API_KEY,
-        endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-        apiVersion: process.env.OPENAI_API_VERSION,
-        deployment: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
-      });
-    }
-    return this.openai;
+    return AzureClientFactory.getClient();
   }
 
-  async generateGreeting(userData) {
+  async generateGreeting(userData, userId = null) {
     const chatHistory = userData?.chatHistory || [];
     const extractedName = userData?.userInfo?.extractedName;
     const name = extractedName;
-    
+
     console.log('检查问候语条件:', {
       hasUserData: !!userData,
       chatHistoryLength: chatHistory.length,
       lastVisit: userData?.lastVisit,
       createdAt: userData?.createdAt
     });
-    
+
     // 检查是否需要发送问候语（基于时间判断）
     if (!this.shouldSendGreeting(userData)) {
       return null; // 24小时内返回的用户不发送问候语
     }
-    
+
     // 首次访问（没有用户数据或没有聊天记录）
     if (!userData || chatHistory.length === 0) {
       console.log('识别为首次访问用户，生成首次问候语');
       const template = promptService.getGreetingTemplate('firstTime', !!name);
       return promptService.formatGreeting(template, { name: name || '' });
     }
-    
-    // 老用户返回 - 使用AI总结话题
+
+    // 老用户返回 - 尝试使用 Memobase 用户画像
     console.log('识别为返回用户，生成返回问候语');
+
+    let lastTopic = null;
+
+    // 优先使用 Memobase 用户画像（如果可用）
+    if (userId) {
+      try {
+        const greetingData = await memoryService.getGreetingData(userId);
+        if (greetingData?.profile) {
+          console.log('使用 Memobase 用户画像生成问候语');
+          lastTopic = this.extractTopicFromProfile(greetingData.profile);
+        }
+      } catch (err) {
+        console.warn('获取 Memobase 用户画像失败:', err.message);
+      }
+    }
+
+    // 如果没有 Memobase 数据，使用传统的 AI 总结
+    if (!lastTopic) {
+      lastTopic = await this.summarizeConversationTopic(chatHistory);
+    }
+
     const template = promptService.getGreetingTemplate('returning', !!name);
-    const lastTopic = await this.summarizeConversationTopic(chatHistory);
     const variables = {
       name: name || '朋友',
       lastTopic: lastTopic
     };
-    
+
     return promptService.formatGreeting(template, variables);
+  }
+
+  /**
+   * 从 Memobase 用户画像中提取话题
+   */
+  extractTopicFromProfile(profile) {
+    if (!profile || !Array.isArray(profile)) return null;
+
+    // 查找用户兴趣相关的画像项
+    for (const item of profile) {
+      if (item.topic?.includes('interest') || item.topic?.includes('concern')) {
+        return item.content?.substring(0, 15) || null;
+      }
+    }
+
+    // 如果没有找到兴趣，返回第一个非空内容
+    for (const item of profile) {
+      if (item.content) {
+        return item.content.substring(0, 15);
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -124,7 +159,7 @@ ${recentMessages}
 话题总结：`;
 
       const response = await this.getOpenAIClient().chat.completions.create({
-        model: process.env.AZURE_OPENAI_DEPLOYMENT_NAME,
+        model: AzureClientFactory.getDeploymentName(),
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 50,
         temperature: 0.3

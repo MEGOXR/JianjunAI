@@ -871,3 +871,421 @@
   transform: translateY(20rpx);
   pointer-events: none;
 }
+
+/* ==================== 图片上传和预览样式 ==================== */
+
+/* 图片上传按钮 */
+.image-upload-btn {
+  width: 56rpx;
+  height: 56rpx;
+  margin-right: 16rpx;
+  flex-shrink: 0;
+}
+
+/* 图片预览容器 */
+.image-preview-container {
+  background-color: #fff;
+  padding: 20rpx;
+  border-top: 1rpx solid #e5e5e5;
+}
+
+.image-preview-scroll {
+  width: 100%;
+  white-space: nowrap;
+}
+
+.image-preview-list {
+  display: inline-flex;
+  gap: 16rpx;
+}
+
+.image-preview-item {
+  position: relative;
+  display: inline-block;
+  width: 160rpx;
+  height: 160rpx;
+}
+
+.preview-image {
+  width: 100%;
+  height: 100%;
+  border-radius: 12rpx;
+}
+
+.remove-image-btn {
+  position: absolute;
+  top: -12rpx;
+  right: -12rpx;
+  width: 48rpx;
+  height: 48rpx;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.remove-icon {
+  color: white;
+  font-size: 40rpx;
+  line-height: 1;
+  font-weight: 300;
+}
+
+/* ==================== 豆包风格 UI ==================== */
+
+/* 新版输入区域 - 豆包风格 */
+.input-area-new {
+  position: fixed;
+  bottom: 58rpx; /* 贴近免责声明上方 */
+  left: 20rpx;
+  right: 20rpx;
+  background-color: #ffffff;
+  padding: 16rpx;
+  border-radius: 32rpx;
+  box-shadow: 0 2rpx 16rpx rgba(0,0,0,0.08);
+  z-index: 100;
+}
+
+.input-container-new {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  height: 88rpx;
+}
+
+/* 左侧相机按钮 */
+.camera-btn {
+  width: 72rpx;
+  height: 72rpx;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: transparent;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.camera-btn:active {
+  background-color: #f0f0f0;
+  transform: scale(0.95);
+}
+
+.camera-icon {
+  width: 48rpx;
+  height: 48rpx;
+}
+
+/* 中间输入框容器 */
+.input-wrapper-new {
+  flex: 1;
+  position: relative;
+  height: 72rpx;
+}
+
+.input-box-new {
+  width: 100%;
+  height: 72rpx;
+  padding: 0 20rpx;
+  font-size: 30rpx;
+  line-height: 72rpx;
+  border: none;
+  border-radius: 36rpx;
+  background-color: #f8f8f8;
+  box-sizing: border-box;
+  transition: background-color 0.2s ease;
+}
+
+.input-box-new:focus {
+  background-color: #f0f0f0;
+}
+
+/* 右侧按钮组 */
+.right-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72rpx;
+  height: 72rpx;
+  flex-shrink: 0;
+}
+
+/* 语音按钮 */
+.voice-btn-new {
+  width: 72rpx;
+  height: 72rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: transparent;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.voice-btn-new:active {
+  background-color: #f0f0f0;
+  transform: scale(0.95);
+}
+
+.voice-icon {
+  width: 48rpx;
+  height: 48rpx;
+}
+
+/* 发送按钮 */
+.send-btn-new {
+  width: 72rpx;
+  height: 72rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #4A90E2 0%, #357ABD 100%);
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  box-shadow: 0 4rpx 12rpx rgba(74, 144, 226, 0.3);
+}
+
+.send-btn-new:active {
+  transform: scale(0.9);
+  opacity: 0.9;
+}
+
+.send-icon {
+  width: 40rpx;
+  height: 40rpx;
+}
+
+/* 新版图片预览容器 - 网格布局 */
+.image-preview-container-new {
+  position: fixed;
+  bottom: 170rpx; /* 在输入框上方 */
+  left: 20rpx;
+  right: 20rpx;
+  background-color: #ffffff;
+  padding: 20rpx;
+  border-radius: 24rpx;
+  box-shadow: 0 2rpx 16rpx rgba(0,0,0,0.08);
+  z-index: 99;
+}
+
+/* 图片网格 */
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16rpx;
+}
+
+/* 网格项 - 正方形 */
+.image-grid-item {
+  position: relative;
+  width: 100%;
+  padding-bottom: 100%; /* 创建正方形 */
+  border-radius: 16rpx;
+  overflow: hidden;
+  background-color: #f8f8f8;
+}
+
+.grid-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 上传中状态 */
+.image-grid-item.uploading::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* 上传loading容器 */
+.upload-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+}
+
+/* 圆环loading */
+.loading-ring {
+  width: 60rpx;
+  height: 60rpx;
+  border: 4rpx solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* 添加更多按钮 */
+.image-grid-item.add-more {
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border: 2rpx dashed #dee2e6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.image-grid-item.add-more:active {
+  background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+  transform: scale(0.98);
+}
+
+.add-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 80rpx;
+  color: #adb5bd;
+  font-weight: 200;
+  line-height: 1;
+}
+
+/* 新版删除按钮 */
+.remove-image-btn-new {
+  position: absolute;
+  top: 8rpx;
+  right: 8rpx;
+  width: 44rpx;
+  height: 44rpx;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+  transition: all 0.2s ease;
+}
+
+.remove-image-btn-new:active {
+  background-color: rgba(0, 0, 0, 0.8);
+  transform: scale(0.9);
+}
+
+.remove-icon-new {
+  color: white;
+  font-size: 36rpx;
+  line-height: 1;
+  font-weight: 300;
+}
+
+/* 相机/相册选择弹窗 */
+.image-source-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 1001;
+  display: flex;
+  align-items: flex-end;
+  animation: modalFadeIn 0.3s ease;
+}
+
+.image-source-content {
+  width: 100%;
+  background-color: white;
+  border-radius: 32rpx 32rpx 0 0;
+  padding: 40rpx 20rpx 60rpx;
+  animation: modalSlideUp 0.3s ease;
+}
+
+.source-option {
+  display: flex;
+  align-items: center;
+  padding: 32rpx 40rpx;
+  margin-bottom: 16rpx;
+  background-color: #f8f8f8;
+  border-radius: 24rpx;
+  transition: all 0.2s ease;
+}
+
+.source-option:active {
+  background-color: #e9ecef;
+  transform: scale(0.98);
+}
+
+.source-icon {
+  width: 56rpx;
+  height: 56rpx;
+  margin-right: 24rpx;
+}
+
+.source-text {
+  font-size: 32rpx;
+  color: #333;
+  font-weight: 500;
+}
+
+/* ==================== 消息中的图片显示样式 ==================== */
+
+/* 消息图片容器 */
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-bottom: 12rpx;
+  max-width: 500rpx;
+}
+
+/* 单张图片包装器 */
+.message-image-wrapper {
+  position: relative;
+  border-radius: 16rpx;
+  overflow: hidden;
+  background-color: rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+}
+
+/* 单张图片 - 较大显示 */
+.message-image-wrapper:first-child:last-child {
+  width: 420rpx;
+  height: 420rpx;
+}
+
+/* 两张图片 - 并排显示 */
+.message-image-wrapper:first-child:nth-last-child(2),
+.message-image-wrapper:nth-child(2):last-child {
+  width: 240rpx;
+  height: 240rpx;
+}
+
+/* 三张图片 - 网格显示（前两个一行，第三个单独一行或者全部小尺寸）*/
+.message-image-wrapper:first-child:nth-last-child(3),
+.message-image-wrapper:nth-child(2):nth-last-child(2),
+.message-image-wrapper:nth-child(3):last-child {
+  width: 160rpx;
+  height: 160rpx;
+}
+
+/* 消息图片样式 */
+.message-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 16rpx;
+  transition: opacity 0.2s ease;
+}
+
+/* 点击反馈 */
+.message-image:active {
+  opacity: 0.8;
+  transform: scale(0.98);
+}

@@ -5,6 +5,7 @@ const StreamingSpeechManager = require('./modules/streaming-speech.js');
 const MessageManager = require('./modules/message-manager.js');
 const ScrollController = require('./modules/scroll-controller.js');
 const UIStateManager = require('./modules/ui-state-manager.js');
+const ImageManager = require('./modules/image-manager.js');
 
 Page({
   // 核心数据状态 - 只保留UI渲染必需的数据
@@ -33,7 +34,12 @@ Page({
     
     // 流式语音识别状态
     isStreamingSpeech: false,
-    
+
+    // 图片上传状态
+    selectedImages: [],  // 存储选中的图片路径
+    uploadingImages: [],  // 存储正在上传中的图片（显示loading）
+    showImageSourceModal: false,  // 控制相机/相册选择弹窗
+
   },
 
   onLoad: function() {
@@ -48,6 +54,7 @@ Page({
     this.messageManager = new MessageManager(this);
     this.scrollController = new ScrollController(this);
     this.uiStateManager = new UIStateManager(this);
+    this.imageManager = new ImageManager(this);
     
     // 初始化页面
     this.uiStateManager.initialize();
@@ -114,6 +121,48 @@ Page({
 
   handleKeyboardHeightChange: function(res) {
     this.scrollController.handleKeyboardHeightChange(res);
+  },
+
+  // ==================== 图片管理方法 ====================
+
+  chooseImage: function() {
+    this.imageManager.chooseImage();
+  },
+
+  removeImage: function(e) {
+    const index = e.currentTarget.dataset.index;
+    this.imageManager.removeImage(index);
+  },
+
+  // 显示相机/相册选择弹窗
+  showImageSourcePicker: function() {
+    this.setData({
+      showImageSourceModal: true
+    });
+  },
+
+  // 隐藏相机/相册选择弹窗
+  hideImageSourcePicker: function() {
+    this.setData({
+      showImageSourceModal: false
+    });
+  },
+
+  // 阻止事件冒泡
+  stopPropagation: function() {
+    // 空函数，用于阻止弹窗内容点击事件冒泡到背景层
+  },
+
+  // 打开相机
+  openCamera: function() {
+    this.hideImageSourcePicker();
+    this.imageManager.chooseImage('camera');
+  },
+
+  // 打开相册
+  openAlbum: function() {
+    this.hideImageSourcePicker();
+    this.imageManager.chooseImage('album');
   },
 
   // ==================== 语音模式切换 ====================
@@ -254,7 +303,7 @@ Page({
   },
 
   // ==================== 消息操作方法 ====================
-  
+
   /**
    * 复制消息内容
    */
@@ -277,6 +326,19 @@ Page({
         });
       }
     });
+  },
+
+  /**
+   * 预览消息中的图片
+   */
+  previewMessageImage: function(e) {
+    const current = e.currentTarget.dataset.current;
+    const urls = e.currentTarget.dataset.urls;
+
+    wx.previewImage({
+      current: current,  // 当前显示图片的链接
+      urls: urls         // 需要预览的图片链接列表
+    });
   }
-  
+
 });

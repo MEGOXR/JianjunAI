@@ -18,12 +18,17 @@ class MessageManager {
   /**
    * 发送消息
    */
-  sendMessage() {
-    if (!this.page.data.userInput || this.page.data.isConnecting) return;
-    
+  async sendMessage() {
+    const hasText = this.page.data.userInput && this.page.data.userInput.trim();
+    const hasImages = this.page.data.selectedImages.length > 0;
+
+    // 必须有文本或图片才能发送
+    if (!hasText && !hasImages) return;
+    if (this.page.data.isConnecting) return;
+
     this.messageCount++;
     this.page.setData({ messageCount: this.messageCount });
-    
+
     // 重置滚动状态
     this.page.scrollController.resetSmartPause();
     this.page.setData({
@@ -31,20 +36,31 @@ class MessageManager {
       showScrollToBottom: false
     });
 
-    const userMessageContent = this.page.data.userInput;
-    const newUserMessage = this.createUserMessage(userMessageContent);
+    const userMessageContent = this.page.data.userInput || '';
+    const selectedImages = [...this.page.data.selectedImages];
+
+    // 创建用户消息，传入图片路径
+    const newUserMessage = this.createUserMessage(userMessageContent, selectedImages);
     const loadingMessage = this.createLoadingMessage();
-    
+
     this.page.setData({
       messages: this.page.data.messages.concat([newUserMessage, loadingMessage]),
       userInput: "",
+      selectedImages: [],  // 清空已选图片
+      uploadingImages: [],  // 清空上传中图片
       isConnecting: true,
       isGenerating: true
     }, () => {
       this.page.scrollController.scrollToBottom(true);
     });
-    
-    this.sendToWebSocket(userMessageContent);
+
+    // 如果有图片，转换为 base64 后发送
+    if (selectedImages.length > 0) {
+      await this.sendMessageWithImages(userMessageContent, selectedImages);
+    } else {
+      this.sendToWebSocket(userMessageContent);
+    }
+
     this.setResponseTimeout();
   }
 
@@ -159,23 +175,26 @@ class MessageManager {
 
   /**
    * 创建用户消息
+   * @param {string} content - 文本内容
+   * @param {Array} images - 图片路径数组（可选）
    */
-  createUserMessage(content) {
+  createUserMessage(content, images = []) {
     const app = getApp();
     const newUserMessage = {
       id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       role: 'user',
       content: content,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      images: images  // 保存图片路径
     };
 
     // 计算时间显示
-    const lastMessage = this.page.data.messages.length > 0 ? 
+    const lastMessage = this.page.data.messages.length > 0 ?
       this.page.data.messages[this.page.data.messages.length - 1] : null;
     const lastTimestamp = lastMessage ? lastMessage.timestamp : null;
     const timeDiff = lastTimestamp ? (newUserMessage.timestamp - lastTimestamp) : null;
     const shouldShowTime = !lastTimestamp || timeDiff > 5 * 60 * 1000;
-    
+
     if (shouldShowTime) {
       this.setMessageTimeDisplay(newUserMessage);
     } else {
@@ -275,13 +294,44 @@ class MessageManager {
   }
 
   /**
+   * 发送带图片的消息
+   */
+  async sendMessageWithImages(content, imagePaths) {
+    try {
+      wx.showLoading({ title: '处理图片中...' });
+
+      // 将图片转换为 base64
+      const base64Images = await this.page.imageManager.convertImagesToBase64(imagePaths);
+
+      wx.hideLoading();
+      console.log('图片转换完成，共', base64Images.length, '张');
+
+      // 发送包含图片的消息
+      const success = this.page.webSocketManager.send({
+        prompt: content,
+        images: base64Images
+      });
+
+      if (!success) {
+        wx.showToast({ title: "发送失败", icon: "none" });
+        this.page.setData({ isConnecting: false });
+      }
+    } catch (error) {
+      wx.hideLoading();
+      console.error('处理图片失败:', error);
+      wx.showToast({ title: "处理图片失败", icon: "none" });
+      this.page.setData({ isConnecting: false });
+    }
+  }
+
+  /**
    * 发送到WebSocket
    */
   sendToWebSocket(content) {
     const success = this.page.webSocketManager.send({
       prompt: content
     });
-    
+
     if (!success) {
       wx.showToast({ title: "发送失败", icon: "none" });
       this.page.setData({ isConnecting: false });
