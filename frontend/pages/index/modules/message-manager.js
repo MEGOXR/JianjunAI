@@ -6,9 +6,9 @@ class MessageManager {
   constructor(pageInstance) {
     this.page = pageInstance;
     this.messageCount = 0;
-    
+
     // 流式渲染控制器
-    this._stream = { 
+    this._stream = {
       buf: '',
       timer: null,
       targetIndex: null
@@ -76,13 +76,13 @@ class MessageManager {
     });
 
     const newUserMessage = this.createUserMessage(text);
-    
+
     this.page.setData({
       messages: this.page.data.messages.concat(newUserMessage)
     }, () => {
       this.page.scrollController.scheduleAutoScroll();
     });
-    
+
     this.sendToWebSocket(text);
   }
 
@@ -92,18 +92,25 @@ class MessageManager {
   handleStreamingData(data) {
     // 清除响应超时计时器
     this.page.webSocketManager.clearResponseTimeout();
-    
+
     // 如果是第一个分片，创建AI消息
     if (this._stream.targetIndex == null) {
       this.createAIMessage();
     }
-    
+
     // 将数据放入缓冲区
     this._stream.buf += data.data;
 
-    // 节流刷新UI
+    // 优化：如果是首个数据包，立即刷新，减少首字等待感
+    if (this._stream.targetIndex != null && this.page.data.messages[this.page.data.messages.length - 1].content === '') {
+      if (this._stream.timer) clearTimeout(this._stream.timer);
+      this.flushStream();
+      return;
+    }
+
+    // 节流刷新UI (从80ms降低到40ms，提升流畅度)
     if (!this._stream.timer) {
-      this._stream.timer = setTimeout(() => this.flushStream(), 80);
+      this._stream.timer = setTimeout(() => this.flushStream(), 40);
     }
   }
 
@@ -114,12 +121,12 @@ class MessageManager {
     // 立即刷新剩余内容
     if (this._stream.timer) clearTimeout(this._stream.timer);
     this.flushStream();
-    
+
     const lastIndex = this._stream.targetIndex;
 
     // 更新最终状态
     if (lastIndex != null) {
-      const updateData = { 
+      const updateData = {
         isConnecting: false,
         isGenerating: false
       };
@@ -131,15 +138,15 @@ class MessageManager {
       }
       this.page.setData(updateData);
     }
-    
+
     // 重置流控制器
     this._stream.targetIndex = null;
-    
+
     // 保存到本地存储
     wx.setStorageSync('messages', this.trimMessages(this.page.data.messages));
-    
+
     console.log('消息接收完成');
-    
+
     // 触发AI回复完成的TTS处理
     if (lastIndex != null) {
       const completedMessage = this.page.data.messages[lastIndex];
@@ -147,10 +154,10 @@ class MessageManager {
         this.page.onAIResponseComplete(completedMessage);
       }
     }
-    
+
     // 清除响应超时
     this.page.webSocketManager.clearResponseTimeout();
-    
+
     // 智能滚动处理
     this.handleCompletionScrolling();
   }
@@ -163,7 +170,7 @@ class MessageManager {
       const idx = this._stream.targetIndex;
       const mergedContent = this.page.data.messages[idx].content + this._stream.buf;
       this._stream.buf = '';
-      
+
       this.page.setData({
         [`messages[${idx}].content`]: mergedContent
       }, () => {
@@ -230,30 +237,30 @@ class MessageManager {
     if (removedCount > 0) {
       console.log(`已移除 ${removedCount} 个加载消息`);
     }
-    
-    this.page.setData({ 
+
+    this.page.setData({
       messages: currentMessages,
-      isGenerating: false 
+      isGenerating: false
     });
-    
+
     const app = getApp();
-    const msg = { 
+    const msg = {
       id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      role: 'assistant', 
-      content: '', 
-      timestamp: Date.now(), 
-      suggestions: [] 
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      suggestions: []
     };
-    
+
     // 设置时间显示
     this.setMessageTimeDisplay(msg, currentMessages);
     msg.formattedTime = app.getFormattedTime(msg.timestamp);
-    
+
     currentMessages.push(msg);
     const idx = currentMessages.length - 1;
-    this.page.setData({ 
+    this.page.setData({
       messages: currentMessages,
-      isConnecting: true 
+      isConnecting: true
     });
     this._stream.targetIndex = idx;
   }
@@ -264,21 +271,21 @@ class MessageManager {
   setMessageTimeDisplay(message, messageList = null) {
     const app = getApp();
     const messages = messageList || this.page.data.messages;
-    
-    const lastMessage = messages.length > 0 ? 
+
+    const lastMessage = messages.length > 0 ?
       messages[messages.length - 1] : null;
     const lastTimestamp = lastMessage ? lastMessage.timestamp : null;
-    
+
     const timeDiff = lastTimestamp ? (message.timestamp - lastTimestamp) : null;
     const shouldShowTime = !lastTimestamp || timeDiff > 5 * 60 * 1000;
-    
+
     if (shouldShowTime) {
       const now = new Date();
       const messageDate = new Date(message.timestamp);
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const messageDay = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
       const daysDiff = Math.floor((today.getTime() - messageDay.getTime()) / (24 * 60 * 60 * 1000));
-      
+
       if (daysDiff === 0) {
         message.formattedDate = app.getFormattedTime(message.timestamp);
       } else if (daysDiff === 1) {
@@ -395,7 +402,7 @@ class MessageManager {
 
       if (shouldShowTime) {
         const daysDiff = Math.floor((today.getTime() - messageDay.getTime()) / (24 * 60 * 60 * 1000));
-        
+
         if (daysDiff === 0) {
           formattedDate = formattedTime;
         } else if (daysDiff === 1) {
@@ -414,13 +421,13 @@ class MessageManager {
           formattedDate = `${year}年${month}月${day}日 ${formattedTime}`;
         }
       }
-      
+
       newMessages.push({
         ...msg,
         formattedDate,
         formattedTime,
       });
-      
+
       lastMessageTimestamp = currentTimestamp;
     });
     return newMessages;
@@ -442,26 +449,26 @@ class MessageManager {
       console.log('❌ 建议问题为空或无效:', suggestions);
       return;
     }
-    
+
     console.log('✅ 处理建议问题:', suggestions);
-    
+
     // 找到最后一条AI消息
     const messages = this.page.data.messages;
     let lastAiMessageIndex = -1;
-    
+
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role === 'assistant' && !messages[i].isLoading) {
         lastAiMessageIndex = i;
         break;
       }
     }
-    
+
     if (lastAiMessageIndex >= 0) {
       console.log(`📍 在消息索引 ${lastAiMessageIndex} 添加建议问题:`, suggestions);
       this.page.setData({
         [`messages[${lastAiMessageIndex}].suggestions`]: suggestions
       });
-      
+
       // 更新本地存储
       const updatedMessages = [...messages];
       updatedMessages[lastAiMessageIndex].suggestions = suggestions;
@@ -477,9 +484,9 @@ class MessageManager {
   onSuggestionTap(e) {
     const { question, msgIndex } = e.currentTarget.dataset;
     if (!question) return;
-    
+
     console.log('用户点击建议问题:', question);
-    
+
     // 立即隐藏建议问题
     this.page.setData({
       [`messages[${msgIndex}].suggestions`]: []
@@ -490,7 +497,7 @@ class MessageManager {
         this.sendMessage();
       });
     });
-    
+
     // 更新本地存储
     const messages = this.page.data.messages;
     if (messages[msgIndex] && messages[msgIndex].suggestions) {
@@ -504,7 +511,7 @@ class MessageManager {
    */
   loadHistoryMessages() {
     let savedMessages = wx.getStorageSync('messages') || [];
-    
+
     // 清理残留的加载消息
     const beforeCount = savedMessages.length;
     savedMessages = savedMessages.filter(msg => !msg.isLoading);
@@ -512,7 +519,7 @@ class MessageManager {
       console.log(`启动时清理了 ${beforeCount - savedMessages.length} 个残留的加载消息`);
       wx.setStorageSync('messages', savedMessages);
     }
-    
+
     return this.trimMessages(this.formatMessages(savedMessages));
   }
 
@@ -524,8 +531,8 @@ class MessageManager {
       clearTimeout(this._stream.timer);
       this._stream.timer = null;
     }
-    
-    this._stream = { 
+
+    this._stream = {
       buf: '',
       timer: null,
       targetIndex: null
