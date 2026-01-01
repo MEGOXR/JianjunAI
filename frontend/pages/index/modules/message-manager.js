@@ -2,6 +2,17 @@
  * Message Manager Module
  * 处理消息收发、流式渲染、本地存储
  */
+
+// 加载文案轮播列表
+const LOADING_TEXTS = [
+  "杨院长正在分析您的问题...",
+  "正在查阅专业资料...",
+  "正在整理思路...",
+  "准备详细回复中...",
+  "马上就好...",
+  "正在组织语言..."
+];
+
 class MessageManager {
   constructor(pageInstance) {
     this.page = pageInstance;
@@ -12,6 +23,13 @@ class MessageManager {
       buf: '',
       timer: null,
       targetIndex: null
+    };
+
+    // 文案轮播控制器
+    this._loadingTextRotation = {
+      timer: null,           // 轮播计时器
+      currentIndex: 0,       // 当前文案索引
+      messageIndex: null     // 当前加载消息的索引
     };
   }
 
@@ -54,6 +72,10 @@ class MessageManager {
       this.page.scrollController.scrollToBottom(true);
     });
 
+    // 启动加载文案轮播（加载消息是最后一个消息）
+    const loadingMessageIndex = this.page.data.messages.length - 1;
+    this.startLoadingTextRotation(loadingMessageIndex);
+
     // 如果有图片，转换为 base64 后发送
     if (selectedImages.length > 0) {
       await this.sendMessageWithImages(userMessageContent, selectedImages);
@@ -95,6 +117,9 @@ class MessageManager {
 
     // 如果是第一个分片，创建AI消息
     if (this._stream.targetIndex == null) {
+      // 停止文案轮播
+      this.stopLoadingTextRotation();
+
       this.createAIMessage();
     }
 
@@ -220,6 +245,7 @@ class MessageManager {
       role: 'assistant',
       content: '',
       isLoading: true,
+      loadingText: LOADING_TEXTS[0], // 初始显示第一条文案
       timestamp: Date.now(),
       id: 'loading-' + Date.now()
     };
@@ -229,6 +255,9 @@ class MessageManager {
    * 创建AI消息
    */
   createAIMessage() {
+    // 停止文案轮播（如果还在运行）
+    this.stopLoadingTextRotation();
+
     // 移除所有加载消息
     let currentMessages = [...this.page.data.messages];
     const beforeCount = currentMessages.length;
@@ -537,6 +566,44 @@ class MessageManager {
       timer: null,
       targetIndex: null
     };
+
+    // 清理文案轮播定时器
+    this.stopLoadingTextRotation();
+  }
+
+  /**
+   * 启动加载文案轮播
+   */
+  startLoadingTextRotation(messageIndex) {
+    // 先停止之前的轮播（如果有）
+    this.stopLoadingTextRotation();
+
+    this._loadingTextRotation.messageIndex = messageIndex;
+    this._loadingTextRotation.currentIndex = 0;
+
+    // 每 2 秒切换一次文案
+    this._loadingTextRotation.timer = setInterval(() => {
+      this._loadingTextRotation.currentIndex =
+        (this._loadingTextRotation.currentIndex + 1) % LOADING_TEXTS.length;
+
+      const newText = LOADING_TEXTS[this._loadingTextRotation.currentIndex];
+
+      this.page.setData({
+        [`messages[${messageIndex}].loadingText`]: newText
+      });
+    }, 2000); // 2秒间隔
+  }
+
+  /**
+   * 停止加载文案轮播
+   */
+  stopLoadingTextRotation() {
+    if (this._loadingTextRotation.timer) {
+      clearInterval(this._loadingTextRotation.timer);
+      this._loadingTextRotation.timer = null;
+      this._loadingTextRotation.messageIndex = null;
+      this._loadingTextRotation.currentIndex = 0;
+    }
   }
 }
 

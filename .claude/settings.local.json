@@ -42,7 +42,18 @@
       "Bash(ssh:*)",
       "Bash(tar:*)",
       "Bash(dir:*)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git pull:*)",
+      "Bash(del .claudesettings.json)",
+      "Bash(del backendcheck-uploaded-images.js)",
+      "Bash(del backenddiagnose-azure-blob.js)",
+      "Bash(del:*)",
+      "Bash(del backendtest-memobase-flow.js)",
+      "Bash(timeout /t 3)",
+      "Bash(ipconfig:*)",
+      "Bash(findstr:*)"
     ],
     "deny": []
   }

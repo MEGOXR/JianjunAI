@@ -349,54 +349,75 @@
   }
 }
 
-/* 加载动画样式 */
+/* ========== 加载动画样式 ========== */
+
+/* 加载消息气泡 - 保留 shimmer + 添加呼吸效果 */
 .loading-message {
   background: linear-gradient(90deg, #f0f0f0 0%, #f8f8f8 50%, #f0f0f0 100%);
   background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
+  animation: shimmer 1.5s infinite, breathe 2s ease-in-out infinite;
+  box-shadow: 0 2rpx 8rpx rgba(0, 122, 255, 0.1);
 }
 
 @keyframes shimmer {
-  0% {
-    background-position: -200% center;
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+/* 呼吸动画 - 微妙的缩放和阴影变化 */
+@keyframes breathe {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 2rpx 8rpx rgba(0, 122, 255, 0.1);
   }
-  100% {
-    background-position: 200% center;
+  50% {
+    transform: scale(1.015);
+    box-shadow: 0 4rpx 16rpx rgba(0, 122, 255, 0.2);
   }
 }
 
+/* 加载容器 - 水平布局，左对齐 */
 .loading-container {
   display: flex;
   align-items: center;
+  gap: 12rpx;
   padding: 4rpx 0;
 }
 
+/* 脉冲光点 - 模拟 AI 思考指示器 */
+.pulse-dot {
+  width: 12rpx;
+  height: 12rpx;
+  background: #007AFF;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.5);
+    box-shadow: 0 0 16rpx rgba(0, 122, 255, 0.6);
+  }
+}
+
+/* 加载文字 - 淡入淡出过渡 */
 .loading-text {
   color: #666;
   font-size: 30rpx;
+  transition: opacity 0.3s ease;
+  animation: textFade 2s ease-in-out infinite;
 }
 
-.loading-dots {
-  color: #666;
-  font-size: 30rpx;
-  margin-left: 4rpx;
-}
-
-.loading-dots::after {
-  content: '';
-  animation: dots 1.5s infinite;
-}
-
-@keyframes dots {
-  0%, 20% { 
-    content: '.'; 
-  }
-  40% { 
-    content: '..'; 
-  }
-  60%, 100% { 
-    content: '...'; 
-  }
+/* 文字淡入淡出动画 - 配合文案切换 */
+@keyframes textFade {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
 }
 
 /* ==================== 语音功能样式 ==================== */

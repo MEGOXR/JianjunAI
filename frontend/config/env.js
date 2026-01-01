@@ -10,8 +10,8 @@ const currentEnv = 'prod';
 const envConfig = {
   // 本地开发环境
   local: {
-    wsBaseUrl: "ws://192.168.1.13:9001",
-    baseUrl: "http://192.168.1.13:9001",
+    wsBaseUrl: "ws://172.20.10.2:3000",
+    baseUrl: "http://172.20.10.2:3000",
     name: "本地环境"
   },
   

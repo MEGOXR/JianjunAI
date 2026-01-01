@@ -41,7 +41,7 @@ class AzureLLMProvider extends LLMProvider {
       model: this.config.deployment,
       messages: messages,
       stream: true,
-      max_tokens: options.maxTokens || 2000,
+      max_completion_tokens: options.maxTokens || 2000,
       temperature: options.temperature || 0.5,
       presence_penalty: options.presencePenalty || 0.1,
       frequency_penalty: options.frequencyPenalty || 0.2,
@@ -66,7 +66,7 @@ class AzureLLMProvider extends LLMProvider {
       model: this.config.deployment,
       messages: messages,
       stream: false,
-      max_tokens: options.maxTokens || 2000,
+      max_completion_tokens: options.maxTokens || 2000,
       temperature: options.temperature || 0.5,
       ...options
     });
@@ -100,9 +100,9 @@ class AzureLLMProvider extends LLMProvider {
    */
   validateConfigSync() {
     return !!(
-      this.config.apiKey && 
-      this.config.endpoint && 
-      this.config.apiVersion && 
+      this.config.apiKey &&
+      this.config.endpoint &&
+      this.config.apiVersion &&
       this.config.deployment
     );
   }
@@ -121,25 +121,25 @@ class AzureLLMProvider extends LLMProvider {
       const response = await this.client.chat.completions.create({
         model: this.config.deployment,
         messages: testMessages,
-        max_tokens: 1,
+        max_completion_tokens: 1,
         stream: false
       });
 
       if (response.choices && response.choices.length > 0) {
-        return { 
-          status: 'healthy', 
+        return {
+          status: 'healthy',
           provider: 'Azure',
           model: this.config.deployment
         };
       } else {
-        return { 
-          status: 'unhealthy', 
+        return {
+          status: 'unhealthy',
           error: 'No response from Azure OpenAI'
         };
       }
     } catch (error) {
-      return { 
-        status: 'unhealthy', 
+      return {
+        status: 'unhealthy',
         error: error.message,
         provider: 'Azure'
       };

@@ -42,8 +42,8 @@
         <view class="ai-message {{item.isLoading ? 'loading-message' : ''}}">
           <!-- 加载动画 -->
           <view wx:if="{{item.isLoading}}" class="loading-container">
-            <text class="loading-text">正在生成</text>
-            <text class="loading-dots"></text>
+            <view class="pulse-dot"></view>
+            <text class="loading-text">{{item.loadingText || '正在生成...'}}</text>
           </view>
           <!-- 消息内容和复制按钮 -->
           <view wx:else class="message-content-wrapper">
