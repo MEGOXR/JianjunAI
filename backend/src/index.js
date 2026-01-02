@@ -1,3 +1,20 @@
+const appInsights = require('applicationinsights');
+
+// 初始化 Azure Application Insights (如果配置了连接字符串)
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+  try {
+    appInsights.setup()
+      .setAutoCollectConsole(true, true) // 启用控制台日志收集
+      .setAutoCollectExceptions(true)    // 启用异常收集
+      .start();
+    console.log('✅ Azure Application Insights 已启动');
+  } catch (err) {
+    console.error('⚠️ Azure Application Insights 启动失败:', err);
+  }
+} else {
+  console.log('ℹ️ 未检测到 APPLICATIONINSIGHTS_CONNECTION_STRING，跳过 Application Insights 初始化');
+}
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -32,7 +49,7 @@ function getEnvVar(name) {
 
 console.log('=== Azure OpenAI 配置 ===');
 const azureEndpoint = getEnvVar('AZURE_OPENAI_ENDPOINT');
-const azureApiKey = getEnvVar('AZURE_OPENAI_API_KEY');  
+const azureApiKey = getEnvVar('AZURE_OPENAI_API_KEY');
 const azureApiVersion = getEnvVar('OPENAI_API_VERSION');
 const azureDeployment = getEnvVar('AZURE_OPENAI_DEPLOYMENT_NAME');
 console.log(`- AZURE_OPENAI_ENDPOINT: ${azureEndpoint ? '已设置' : '未设置'}`);
@@ -53,14 +70,14 @@ SecurityHeaders.configure(app);
 
 // 中间件配置
 app.use(cors({
-  origin: function(origin, callback) {
+  origin: function (origin, callback) {
     // 允许的源
     const allowedOrigins = [
       'https://servicewechat.com',
       'http://localhost:3000',
       'https://mego-xr.com'
     ];
-    
+
     // 允许没有origin的请求（比如移动应用）
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
@@ -77,7 +94,7 @@ app.use('/public', express.static('public'));
 
 // 根路径 - Azure AlwaysOn健康检查
 app.get('/', (req, res) => {
-  res.status(200).json({ 
+  res.status(200).json({
     service: 'JianjunAI API',
     status: 'OK',
     timestamp: new Date().toISOString(),
@@ -124,15 +141,15 @@ app.get('/api/version', (req, res) => {
 // 认证端点 - 生成JWT令牌
 app.post('/auth/token', (req, res) => {
   const { userId } = req.body;
-  
+
   // 验证用户ID
   if (!SecurityMiddleware.isValidUserId(userId)) {
     return res.status(400).json({ error: 'Invalid user ID' });
   }
-  
+
   // 生成JWT令牌
   const token = AuthMiddleware.generateToken(userId);
-  
+
   res.json({
     token,
     expiresIn: '24h',
@@ -157,14 +174,14 @@ const warmupLLMConnection = async () => {
   try {
     console.log('正在预热LLM连接...');
     const ProviderFactory = require('./services/ProviderFactory');
-    
+
     const provider = ProviderFactory.getLLMProvider();
 
     // 发送一个简单的请求来预热连接
     const response = await provider.createCompletion('测试连接', {
       max_completion_tokens: 5  // 使用正确的 API 参数名
     });
-    
+
     console.log('✅ LLM连接预热成功');
   } catch (error) {
     console.warn('⚠️ LLM连接预热失败（不影响正常服务）:', error.message);
@@ -220,7 +237,7 @@ app.get('/config-check', (req, res) => {
       websiteSiteName: process.env.WEBSITE_SITE_NAME || '未设置'
     }
   };
-  
+
   res.status(200).json(config);
 });
 
@@ -229,7 +246,7 @@ app.get('/ws-test', (req, res) => {
   // 如果wss还没创建，返回基本信息
   const wsSize = typeof wss !== 'undefined' ? wss.clients.size : 0;
   const heartbeatStats = heartbeatService.getStats();
-  res.status(200).json({ 
+  res.status(200).json({
     message: 'WebSocket服务器运行中',
     wsConnections: wsSize,
     heartbeatStats,
@@ -262,28 +279,28 @@ wss.on('connection', async (ws, req) => {
   console.log('WebSocket 连接已建立');
   console.log('请求URL:', req.url);
   console.log('请求头:', JSON.stringify(req.headers, null, 2));
-  
+
   // 使用JWT认证
   if (!AuthMiddleware.authenticateWebSocket(ws, req)) {
     console.warn('WebSocket authentication failed - closing connection');
     ws.close(1008, 'JWT authentication required');
     return;
   }
-  
+
   const userId = ws.userId;
-  
+
   // 检查速率限制
   if (!SecurityMiddleware.checkRateLimit(userId)) {
     console.warn(`Rate limit exceeded for user: ${userId}`);
     ws.close(1008, 'Too many requests');
     return;
   }
-  
+
   ws.userId = userId;
-  
+
   // 注册心跳监控
   heartbeatService.register(ws);
-  
+
   // 初始化连接并发送问候
   await chatController.handleConnection(ws);
 
@@ -291,21 +308,21 @@ wss.on('connection', async (ws, req) => {
   ws.on('message', async (message) => {
     // 最基础的调试：确认消息事件被触发
     console.log('🔍 收到原始WebSocket消息，长度:', message.length, '字节');
-    
+
     try {
       const data = JSON.parse(message);
-      
+
       // 调试：记录所有收到的消息
-      console.log('📨 WebSocket收到消息:', { 
-        type: data.type, 
-        userId: ws.userId, 
+      console.log('📨 WebSocket收到消息:', {
+        type: data.type,
+        userId: ws.userId,
         messageId: data.messageId,
         sessionId: data.sessionId || 'undefined',
         hasAudio: !!data.audio,
         hasPrompt: !!data.prompt,
         hasConfig: !!data.config
       });
-      
+
       // 特别关注语音相关消息
       if (data.type && data.type.startsWith('speech_')) {
         console.log(`🎯 语音消息详情 [${data.type}]:`, {
@@ -314,7 +331,7 @@ wss.on('connection', async (ws, req) => {
           audioSize: data.audio ? data.audio.length : 0
         });
       }
-      
+
       if (data.type === 'init') {
         // 客户端初始化请求，重新发送问候
         console.log('收到init消息:', data);
@@ -324,8 +341,8 @@ wss.on('connection', async (ws, req) => {
         } catch (error) {
           console.error('handleConnection 处理失败:', error);
           // 不要关闭连接，发送错误信息即可
-          ws.send(JSON.stringify({ 
-            type: 'error', 
+          ws.send(JSON.stringify({
+            type: 'error',
             error: '初始化失败',
             details: error.message,
             data: '初始化失败'
@@ -333,7 +350,7 @@ wss.on('connection', async (ws, req) => {
         }
         return;
       }
-      
+
       // 如果有 prompt 字段，验证输入
       if (data.prompt !== undefined) {
         const inputValidation = SecurityMiddleware.validateInput(data.prompt);
@@ -342,7 +359,7 @@ wss.on('connection', async (ws, req) => {
           return;
         }
       }
-      
+
       // 处理流式语音识别消息（不受速率限制）
       if (data.type === 'speech_start') {
         console.log('🎤 开始流式语音识别:', data.sessionId, '配置:', JSON.stringify(data.config || {}));
@@ -356,7 +373,7 @@ wss.on('connection', async (ws, req) => {
         }
         return;
       }
-      
+
       if (data.type === 'speech_frame') {
         // 处理音频帧数据
         try {
@@ -366,7 +383,7 @@ wss.on('connection', async (ws, req) => {
         }
         return;
       }
-      
+
       if (data.type === 'speech_end') {
         console.log('🛑 结束流式语音识别:', data.sessionId);
         try {
@@ -376,7 +393,7 @@ wss.on('connection', async (ws, req) => {
         }
         return;
       }
-      
+
       if (data.type === 'speech_cancel') {
         console.log('❌ 取消流式语音识别:', data.sessionId);
         try {
@@ -413,8 +430,8 @@ wss.on('connection', async (ws, req) => {
       }
     } catch (error) {
       console.error('WebSocket 错误:', error);
-      ws.send(JSON.stringify({ 
-        error: '服务器内部错误', 
+      ws.send(JSON.stringify({
+        error: '服务器内部错误',
         details: error.message || '未知错误'
       }));
     }
@@ -426,7 +443,7 @@ wss.on('connection', async (ws, req) => {
     chatController.handleDisconnect(ws);
     console.log('WebSocket 连接已关闭');
   });
-  
+
   // 处理连接错误
   ws.on('error', (error) => {
     console.error('WebSocket error:', error);

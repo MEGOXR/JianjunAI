@@ -8,6 +8,7 @@ const azureBlobService = require('../services/azureBlobService');
 const supabaseService = require('../services/supabaseService');
 const ErrorHandler = require('../middleware/errorHandler');
 const AzureClientFactory = require('../utils/AzureClientFactory');
+const StreamSmoother = require('../utils/StreamSmoother');
 
 // Provider支持
 const ConfigService = require('../services/ConfigService');
@@ -27,7 +28,7 @@ class PerformanceTimer {
     const elapsed = now - this.startTime;
     const lastMark = this.marks.length > 0 ? this.marks[this.marks.length - 1] : null;
     const delta = lastMark ? now - lastMark.timestamp : elapsed;
-    
+
     const mark = {
       label,
       timestamp: now,
@@ -35,10 +36,10 @@ class PerformanceTimer {
       delta,
       ...metadata
     };
-    
+
     this.marks.push(mark);
     console.log(`[${this.requestId}] ⏱️ ${label}: +${delta}ms (total: ${elapsed}ms)`, metadata);
-    
+
     return mark;
   }
 
@@ -69,7 +70,7 @@ const MAX_MESSAGES_PER_USER = 8;
 function cleanupChatHistories() {
   const now = Date.now();
   let cleanedCount = 0;
-  
+
   for (const [userId, history] of chatHistories.entries()) {
     const lastAccess = history.lastAccess || 0;
     if (now - lastAccess > MAX_IDLE_TIME) {
@@ -77,23 +78,23 @@ function cleanupChatHistories() {
       cleanedCount++;
       continue;
     }
-    
+
     if (history.messages && history.messages.length > MAX_MESSAGES_PER_USER) {
       history.messages.splice(0, history.messages.length - MAX_MESSAGES_PER_USER);
     }
   }
-  
+
   if (chatHistories.size > MAX_HISTORY_SIZE) {
     const sortedEntries = [...chatHistories.entries()]
       .sort((a, b) => (a[1].lastAccess || 0) - (b[1].lastAccess || 0));
-    
+
     const toRemove = sortedEntries.slice(0, chatHistories.size - MAX_HISTORY_SIZE);
     toRemove.forEach(([userId]) => {
       chatHistories.delete(userId);
       cleanedCount++;
     });
   }
-  
+
   if (cleanedCount > 0) {
     console.log(`Memory cleanup: removed ${cleanedCount} histories. Current size: ${chatHistories.size}`);
   }
@@ -212,15 +213,15 @@ exports.sendMessage = async (ws, prompt, images = []) => {
       console.log('Azure配置验证通过');
     }
     timer.mark('配置验证完成');
-    
+
     // 2. 获取用户ID
     const userId = getUserId(ws);
     timer.mark('用户ID获取完成', { userId });
-    
+
     // 3. 异步获取用户数据
     timer.mark('开始获取用户数据');
     const userDataPromise = userDataService.getUserData(userId);
-    
+
     // 4. 获取增强的系统提示词（包含Memobase记忆）
     timer.mark('开始获取增强系统提示词');
     let enhancedSystemPrompt = promptService.getSystemPrompt();
@@ -262,11 +263,11 @@ exports.sendMessage = async (ws, prompt, images = []) => {
         historyData.messages[0].content = enhancedSystemPrompt;
       }
     }
-    
+
     // 6. 更新历史记录
     let historyData = chatHistories.get(userId);
     timer.mark('获取对话历史完成', { messageCount: historyData?.messages?.length });
-    
+
     if (Array.isArray(historyData)) {
       chatHistories.set(userId, {
         messages: historyData,
@@ -302,99 +303,253 @@ exports.sendMessage = async (ws, prompt, images = []) => {
     });
 
     // 7. 发送初始化消息
-    ws.send(JSON.stringify({ 
+    ws.send(JSON.stringify({
       type: 'init',
       userId: userId,
       requestId: requestId,
       timing: timer.getReport()
     }));
     timer.mark('初始化消息发送完成');
-    
-    // 8. 调用LLM
-    let stream;
-    timer.mark('开始调用LLM');
-    
-    if (useProvider) {
-      // Provider模式
-      const llmProvider = ProviderFactory.getLLMProvider();
-      timer.mark('Provider工厂获取完成');
-      
-      await llmProvider.initialize();
-      timer.mark('Provider初始化完成');
-      
-      console.log(`调用 ${llmProvider.getName()}，模型:`, llmProvider.getModelInfo());
-      
-      stream = await llmProvider.createChatStream(history, {
-        maxCompletionTokens: 1000  // GPT-5.2 使用 maxCompletionTokens 替代 maxTokens
-        // temperature: 0.5  // 已禁用：GPT-5.2 只支持默认 temperature=1
-      });
-      timer.mark('Provider流创建完成');
-    } else {
-      // Azure模式 - 使用工厂类获取客户端
-      AzureClientFactory.validateConfig();
-      const client = AzureClientFactory.getClient();
-      timer.mark('Azure客户端创建完成');
 
-      stream = await client.chat.completions.create({
-        model: AzureClientFactory.getDeploymentName(),
-        messages: history,
-        stream: true,
-        max_completion_tokens: 2000,  // GPT-5.2 使用 max_completion_tokens 替代 max_tokens
-        // 注意：GPT-5.2 目前只支持 temperature=1 (默认值)
-        // temperature: 0.5,  // 已禁用：GPT-5.2 不支持自定义 temperature
-        // presence_penalty: 0.1,  // 可能不支持，需要测试
-        // frequency_penalty: 0.2,  // 可能不支持，需要测试
-        stop: null
-      });
-      timer.mark('Azure流创建完成');
-    }
-    
-    console.log('LLM流创建成功');
-    
-    // 9. 处理流式响应
+    // ==================================================================================
+    // 🧠 主动回忆 (Active Recall) & 🌊 平滑流式输出 (Stream Smoothing)
+    // ==================================================================================
+
+    // 初始化平滑器
+    // 创建一个发送函数，用来封装 ws.send
+    let tokenIndex = 0;
+    const sendToWs = (chunk) => {
+      tokenIndex++;
+      ws.send(JSON.stringify({
+        data: chunk,
+        timing: {
+          elapsed: Date.now() - timer.startTime,
+          tokenIndex: tokenIndex
+        }
+      }));
+    };
+
+    const smoother = new StreamSmoother(sendToWs, {
+      minDelay: 15,
+      maxDelay: 40
+    });
+
+    // 🕵️ 意图识别 (V2) - LLM 主导
+    // 不再使用简单的关键词匹配，而是由 Prompt 引导 LLM 输出 [SEARCH: xxx]
+    // 我们需要在流式输出过程中拦截这个标记
+
     let assistantResponse = '';
+
+    // 构建用于本次请求的消息列表
+    let messagesForLlm = [
+      { role: 'system', content: promptService.getSystemPrompt() },
+      ...history.filter(m => m.role !== 'system')
+    ];
+
+    // 流处理控制变量
+    let stream;
+    let isSearchTriggered = false;
+    let searchBuffer = ''; // 用于检测 [SEARCH: ...] 的临时缓冲
+
+    // 定义一个通用的流处理函数，方便在搜索后重新调用
+    const processStream = async (inputMessages) => {
+      let currentStream;
+
+      if (useProvider) {
+        const llmProvider = ProviderFactory.getLLMProvider();
+        await llmProvider.initialize();
+        currentStream = await llmProvider.createChatStream(inputMessages, { maxCompletionTokens: 1000 });
+      } else {
+        AzureClientFactory.validateConfig();
+        const client = AzureClientFactory.getClient();
+        currentStream = await client.chat.completions.create({
+          model: AzureClientFactory.getDeploymentName(),
+          messages: inputMessages,
+          stream: true,
+          max_completion_tokens: 2000,
+          stop: null
+        });
+      }
+
+      return currentStream;
+    };
+
+    // 第一次调用 LLM
+    timer.mark('开始第一次调用LLM');
+    stream = await processStream(messagesForLlm);
+
+    // 处理流
     let firstTokenReceived = false;
     let tokenCount = 0;
-    
+
     for await (const chunk of stream) {
       const content = chunk.choices?.[0]?.delta?.content;
-      if (content !== undefined) {
-        // 记录首个token时间
-        if (!firstTokenReceived) {
-          firstTokenReceived = true;
-          timer.mark('🎯 首个Token接收 (TTFT)', { 
-            ttft: Date.now() - timer.startTime,
-            tokenCount: 1
-          });
+      if (content === undefined || content === null) continue;
+
+      if (!firstTokenReceived) {
+        firstTokenReceived = true;
+        timer.mark('🎯 首个Token接收 (TTFT)');
+      }
+
+      tokenCount++;
+      assistantResponse += content;
+
+      // 🕵️ 实时检测 [SEARCH: ...] 标记 - 健壮版
+      // 将新内容拼接到缓冲
+      searchBuffer += content;
+
+      // 状态机逻辑：
+      // 1. 如果缓冲中没有 '['，说明肯定没有 tag，直接 output 并清空缓冲
+      // 2. 如果有 '['，则保留缓冲，等待更多内容，直到：
+      //    a. 找到了 ']' -> 解析 tag
+      //    b. 缓冲太长 (>50) -> 肯定不是 tag，output 并清空
+
+      const openBracketIndex = searchBuffer.indexOf('[');
+
+      if (openBracketIndex === -1) {
+        // 没有 '['，安全输出
+        smoother.push(searchBuffer);
+        searchBuffer = '';
+      } else {
+        // 有 '['，可能是 tag
+        // 先把 '[' 之前的内容安全输出
+        if (openBracketIndex > 0) {
+          const safePrefix = searchBuffer.substring(0, openBracketIndex);
+          smoother.push(safePrefix);
+          searchBuffer = searchBuffer.substring(openBracketIndex);
         }
-        
-        tokenCount++;
-        assistantResponse += content;
-        
-        // 清理并发送内容
-        const cleanedContent = content
-          .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')
-          .replace(/\*\*([^*]+)\*\*/g, '「$1」')
-          .replace(/\*([^*]+)\*/g, '$1')
-          .replace(/#{1,6}\s*/g, '')
-          .replace(/^\s*[-*+]\s+/gm, '• ')
-          .replace(/`([^`]+)`/g, '「$1」');
-          
-        ws.send(JSON.stringify({ 
-          data: cleanedContent,
-          timing: {
-            elapsed: Date.now() - timer.startTime,
-            tokenIndex: tokenCount
+
+        // 现在 searchBuffer 以 '[' 开头
+        // 检查是否有闭合的 ']'
+        const closeBracketIndex = searchBuffer.indexOf(']');
+
+        if (closeBracketIndex !== -1) {
+          // ✅ 捕获到了完整 tag: [XXXX]
+          const fullTag = searchBuffer.substring(0, closeBracketIndex + 1);
+          // 检查是不是 SEARCH 指令 (放宽条件：支持 [SEARCH] 和 [SEARCH: query])
+          if (fullTag.includes('SEARCH')) {
+            const query = fullTag.replace(/\[SEARCH:?/, '').replace(']', '').trim();
+
+            console.log(`🕵️ 捕获到主动回忆指令: "${query}"`);
+            timer.mark('捕获到搜索指令', { query });
+
+            // 暂停平滑器
+            smoother.pause();
+
+            // 从 assistantResponse 中移除该指令
+            assistantResponse = assistantResponse.replace(fullTag, '');
+
+            // 清空 buffer (因为已经处理了这个 tag)
+            // 注意：如果有剩余内容 (比如 [SEARCH]后还有字)，要留着
+            const remaining = searchBuffer.substring(closeBracketIndex + 1);
+            searchBuffer = remaining;
+
+            // --- 执行异步搜索 ---
+            try {
+              let searchResults = [];
+              try {
+                searchResults = await memoryService.searchEvents(userId, query || prompt, 3); // 如果 query 为空用 prompt 兜底
+              } catch (memobaseError) {
+                console.error('Memobase 搜索失败 (可能是配额超限):', memobaseError.message);
+                // 失败时不中断流程，视为无结果
+                searchResults = [];
+              }
+
+              let searchResultContext = '';
+              if (searchResults && searchResults.length > 0) {
+                console.log(`🔍 搜索完成，找到 ${searchResults.length} 条记录`);
+                searchResultContext = searchResults.map(e => {
+                  const time = e.timestamp ? new Date(e.timestamp).toLocaleDateString() : '未知时间';
+                  return `- ${time}: ${e.content || e}`;
+                }).join('\n');
+              } else {
+                console.log('🔍 搜索完成，无记录');
+                searchResultContext = '未找到相关历史记录。';
+              }
+
+              // 构建后续 Prompt
+              const alreadySpoken = assistantResponse.trim();
+              const followUpSystemPrompt = `${promptService.getSystemPrompt()}
+
+【重要插播】
+你刚才已经对用户说了："${alreadySpoken}"。
+然后你觉得需要搜索记忆，刚刚系统帮你搜索到了以下信息：
+${searchResultContext}
+
+请基于以上搜索结果，**接着你刚才的话**（"${alreadySpoken}"）继续把话说完。
+不要重复之前的话，直接输出后续内容。确保语音连贯，就像一个人中间停顿了一下思考后接着说一样。`;
+
+              messagesForLlm = [
+                { role: 'system', content: followUpSystemPrompt },
+                ...history.filter(m => m.role !== 'system')
+              ];
+
+              // 第二次调用 LLM
+              timer.mark('开始第二次调用LLM (带记忆)');
+              const secondStream = await processStream(messagesForLlm);
+
+              smoother.resume();
+
+              for await (const chunk2 of secondStream) {
+                const content2 = chunk2.choices?.[0]?.delta?.content;
+                if (content2) {
+                  assistantResponse += content2;
+                  tokenCount++;
+                  const cleaned2 = content2
+                    .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')
+                    .replace(/\*\*([^*]+)\*\*/g, '「$1」')
+                    .replace(/\*([^*]+)\*/g, '$1')
+                    .replace(/#{1,6}\s*/g, '')
+                    .replace(/^\s*[-*+]\s+/gm, '• ')
+                    .replace(/`([^`]+)`/g, '「$1」');
+                  smoother.push(cleaned2);
+                }
+              }
+
+              isSearchTriggered = true;
+              // 处理剩余的 searchBuffer (一般是空的，除非 tag 后紧跟文字)
+              if (searchBuffer) {
+                smoother.push(searchBuffer);
+                searchBuffer = '';
+              }
+              break; // 退出外层流循环
+
+            } catch (err) {
+              console.error('执行搜索流程失败:', err);
+              smoother.resume(); // 出错也要恢复
+            }
+          } else {
+            // 是 [XXX] 但不是 SEARCH，当作普通文本输出
+            smoother.push(fullTag);
+            searchBuffer = searchBuffer.substring(closeBracketIndex + 1);
           }
-        }));
+        } else {
+          // 有 '[' 但没有 ']'，继续缓冲
+          // 安全检查：如果缓冲太长，说明可能不是 tag，强制输出以防卡死
+          if (searchBuffer.length > 50) {
+            smoother.push(searchBuffer);
+            searchBuffer = '';
+          }
+        }
       }
     }
-    
-    timer.mark('流式响应处理完成', { 
+
+    // 循环结束后，如果缓冲区还有剩（比如被打断的 [SEARCH），全部吐出来
+    if (!isSearchTriggered && searchBuffer) {
+      smoother.push(searchBuffer);
+    }
+
+    // 如果没有触发搜索，确保 searchBuffer 里可能残留的内容（例如 [ 没闭合的情况）被吐出来
+    // 但一般 LLM 不会只输出一半 tag。
+
+    // 💡 确保所有内容都输出 (等待平滑器跑完)
+    await smoother.flush();
+
+    timer.mark('流式响应处理完成', {
       totalTokens: tokenCount,
-      responseLength: assistantResponse.length 
+      responseLength: assistantResponse.length
     });
-    
+
     // 10. 保存助手响应
     history.push({ role: "assistant", content: assistantResponse });
 
@@ -451,11 +606,11 @@ exports.sendMessage = async (ws, prompt, images = []) => {
       const systemMessage = history.find(msg => msg.role === 'system');
       const recentHistory = history.slice(-9);
       history = systemMessage ? [systemMessage, ...recentHistory] : recentHistory;
-      
+
       historyData.messages = history;
       timer.mark('历史记录裁剪完成');
     }
-    
+
     // 12. 异步保存历史
     userDataService.updateChatHistory(userId, history)
       .then(() => timer.mark('历史记录持久化完成'))
@@ -463,7 +618,7 @@ exports.sendMessage = async (ws, prompt, images = []) => {
         console.error('保存历史失败:', error);
         timer.mark('历史记录持久化失败', { error: error.message });
       });
-    
+
     // 13. 获取建议问题
     timer.mark('开始获取建议问题');
     const suggestions = await suggestionService.generateSuggestions(
@@ -471,14 +626,14 @@ exports.sendMessage = async (ws, prompt, images = []) => {
       assistantResponse
     );
     timer.mark('建议问题获取完成', { suggestionCount: suggestions.length });
-    
+
     // 14. 发送完成消息
-    ws.send(JSON.stringify({ 
+    ws.send(JSON.stringify({
       done: true,
       suggestions: suggestions,
       timing: timer.getReport()
     }));
-    
+
     // 最终报告
     const report = timer.getReport();
     console.log(`\n${'='.repeat(60)}`);
@@ -487,11 +642,11 @@ exports.sendMessage = async (ws, prompt, images = []) => {
     console.log(`TTFT: ${report.marks.find(m => m.label.includes('TTFT'))?.elapsed || 'N/A'}ms`);
     console.log(`Token数: ${tokenCount}`);
     console.log(`${'='.repeat(60)}\n`);
-    
+
   } catch (error) {
     timer.mark('错误发生', { error: error.message });
     console.error('处理消息时出错:', error);
-    
+
     ErrorHandler.handleWebSocketError(ws, error, 'Chat');
   }
 };
@@ -499,34 +654,34 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 // 其他导出函数保持不变
 exports.sendGreeting = async (ws, userInfo = {}) => {
   const timer = new PerformanceTimer(`greeting_${Date.now()}`);
-  
+
   try {
     const userId = getUserId(ws);
     timer.mark('开始生成问候语');
-    
+
     const userData = await userDataService.getUserData(userId);
     timer.mark('用户数据获取完成');
-    
+
     const greeting = await greetingService.generateGreeting(userData, userId);
     timer.mark('问候语生成完成');
-    
-    ws.send(JSON.stringify({ 
+
+    ws.send(JSON.stringify({
       greeting,
       userInfo: userData?.userInfo || {},
       timing: timer.getReport()
     }));
-    
+
     const suggestions = await suggestionService.getInitialSuggestions();
     timer.mark('初始建议获取完成');
-    
-    ws.send(JSON.stringify({ 
+
+    ws.send(JSON.stringify({
       suggestions,
       timing: timer.getReport()
     }));
-    
+
   } catch (error) {
     console.error('生成问候语失败:', error);
-    ws.send(JSON.stringify({ 
+    ws.send(JSON.stringify({
       greeting: "您好！我是杨院长，很高兴为您提供专业的整形美容咨询服务。请问有什么可以帮助您的？",
       timing: timer.getReport()
     }));

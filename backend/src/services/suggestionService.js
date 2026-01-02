@@ -37,20 +37,17 @@ class SuggestionService {
     try {
       const prompt = this.buildSuggestionPrompt(conversationHistory, lastResponse);
       console.log('生成建议问题的提示词:', prompt.substring(0, 200) + '...');
-      
+
       const response = await this.provider.createCompletion(prompt, {
-        max_tokens: 300,
-        temperature: 0.3, // 降低随机性，提高一致性
-        presence_penalty: 0.1,
-        frequency_penalty: 0.1
+        max_tokens: 300
       });
-      
+
       const content = response.trim();
       console.log('LLM返回的建议问题内容:', content);
-      
+
       // 尝试解析JSON
       const suggestions = this.parseSuggestions(content);
-      
+
       if (suggestions.length > 0) {
         console.log('成功生成建议问题:', suggestions);
         return suggestions.slice(0, 2); // 确保只返回2个
@@ -58,7 +55,7 @@ class SuggestionService {
         console.log('未能解析出有效的建议问题');
         return [];
       }
-      
+
     } catch (error) {
       console.error('生成建议问题失败:', error);
       return [];
@@ -73,20 +70,20 @@ class SuggestionService {
    */
   shouldGenerateSuggestions(conversationHistory, lastResponse) {
     // 只保留最基本的过滤，其他交给LLM判断
-    
+
     // 1. AI回复过于简短（少于20字符）- 这种情况确实不适合生成建议问题
     if (lastResponse.length < 20) {
       console.log('AI回复过于简短，不生成建议问题');
       return false;
     }
-    
+
     // 2. 没有用户消息历史
     const userMessages = conversationHistory.filter(msg => msg.role === 'user');
     if (userMessages.length === 0) {
       console.log('没有用户消息历史，不生成建议问题');
       return false;
     }
-    
+
     // 其他情况都交给LLM自己判断
     console.log('交给LLM判断是否生成建议问题');
     return true;
@@ -98,7 +95,7 @@ class SuggestionService {
   buildSuggestionPrompt(conversationHistory, lastResponse) {
     // 提取最近的对话上下文（最多5轮对话）
     const recentHistory = conversationHistory.slice(-10); // 最多10条消息（5轮对话）
-    
+
     const historyText = recentHistory
       .filter(msg => msg.role !== 'system')
       .map(msg => `${msg.role === 'user' ? '用户' : '杨院长'}: ${msg.content}`)
@@ -244,7 +241,7 @@ ${lastResponse}
       ['有更好的方案吗？', '什么时候做最好？'],
       ['会很疼吗？', '需要复诊吗？']
     ];
-    
+
     // 随机选择一组备用问题
     const randomIndex = Math.floor(Math.random() * fallbacks.length);
     return fallbacks[randomIndex];

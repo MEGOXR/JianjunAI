@@ -17,7 +17,7 @@ class PromptService {
   async loadPrompts() {
     if (this.isLoading) return;
     this.isLoading = true;
-    
+
     try {
       const configPath = path.join(__dirname, '../../config/prompts.json');
       const configData = await fs.readFile(configPath, 'utf8');
@@ -46,7 +46,7 @@ class PromptService {
       console.warn('提示词配置尚未加载，使用默认配置');
       return this.getDefaultConfig().systemPrompt.prompt;
     }
-    
+
     const prompt = this.promptsConfig.systemPrompt.prompt;
     console.log('当前使用的系统提示词长度:', prompt ? prompt.length : 0);
     console.log('提示词前100字符:', prompt ? prompt.substring(0, 100) + '...' : 'null');
@@ -58,9 +58,9 @@ class PromptService {
       console.warn('提示词配置尚未加载，使用默认问候语');
       return '您好！欢迎咨询，我是您的专属美容顾问。';
     }
-    
+
     const templates = this.promptsConfig.greetingTemplates;
-    
+
     if (type === 'firstTime') {
       return hasName ? templates.firstTime.withNickname : templates.firstTime.withoutNickname;
     } else if (type === 'returning') {
@@ -68,7 +68,7 @@ class PromptService {
       // 这里可以根据上次访问时间决定使用 recent 还是 longTime
       return templates.returning.recent;
     }
-    
+
     return templates.firstTime.withoutNickname;
   }
 
@@ -88,7 +88,7 @@ class PromptService {
           console.log('配置文件不存在，跳过监听');
           return;
         }
-        
+
         // 使用 fs.watch 代替 watchFile，性能更好
         fsSync.watch(configPath, { persistent: false }, async (eventType) => {
           if (eventType === 'change') {
@@ -125,60 +125,7 @@ class PromptService {
     return formatted;
   }
 
-  // 清理AI回复中的Markdown格式符号
-  cleanMarkdownForWeChat(text) {
-    if (!text || typeof text !== 'string') return text;
-    
-    let cleaned = text
-      // 移除所有可能的标题格式
-      .replace(/^#{1,6}\s*/gm, '')
-      .replace(/^={2,}$/gm, '')
-      .replace(/^-{2,}$/gm, '')
-      
-      // 移除加粗和斜体格式
-      .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')  // 粗斜体
-      .replace(/\*\*([^*]+)\*\*/g, '「$1」')      // 加粗
-      .replace(/\*([^*]+)\*/g, '$1')             // 斜体
-      .replace(/__([^_]+)__/g, '「$1」')         // 下划线加粗
-      .replace(/_([^_]+)_/g, '$1')              // 下划线斜体
-      
-      // 移除所有分隔线变体
-      .replace(/^[-*_]{3,}$/gm, '')
-      .replace(/^\s*[-*_]{3,}\s*$/gm, '')
-      
-      // 移除引用格式  
-      .replace(/^>\s*/gm, '')
-      .replace(/^&gt;\s*/gm, '')
-      
-      // 移除代码块和行内代码
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/~~([^~]+)~~/g, '$1')            // 删除线
-      .replace(/`([^`]+)`/g, '「$1」')
-      
-      // 转换列表格式 - 更全面的匹配
-      .replace(/^\s*[-*+]\s+/gm, '• ')
-      .replace(/^\s*(\d+)\.\s+/gm, (match, number) => {
-        return `${this.getChineseNumber(number)} `;
-      })
-      
-      // 移除链接格式但保留文本
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-      
-      // 移除表格分隔符
-      .replace(/^\|.*\|$/gm, '')
-      .replace(/^\s*\|[-:|\s]+\|\s*$/gm, '')
-      
-      // 清理多余的符号
-      .replace(/[#*_`~\[\]]/g, '')
-      
-      // 清理多余的空行和空白
-      .replace(/\n{3,}/g, '\n\n')
-      .replace(/^\s+$/gm, '')
-      .trim();
-    
-    return cleaned;
-  }
+
 
   // 转换数字为阿拉伯数字序号
   getChineseNumber(num) {

@@ -37,16 +37,19 @@ class AzureLLMProvider extends LLMProvider {
       await this.initialize();
     }
 
+    // Extract known parameters and remove potential conflicting ones
+    const { maxTokens, max_tokens, max_completion_tokens, ...otherOptions } = options;
+
     const streamOptions = {
       model: this.config.deployment,
       messages: messages,
       stream: true,
-      max_completion_tokens: options.maxTokens || 2000,
-      temperature: options.temperature || 0.5,
-      presence_penalty: options.presencePenalty || 0.1,
-      frequency_penalty: options.frequencyPenalty || 0.2,
-      stop: options.stop || null,
-      ...options
+      max_completion_tokens: maxTokens || 2000,
+      temperature: options.temperature,
+      presence_penalty: options.presencePenalty,
+      frequency_penalty: options.frequencyPenalty,
+      stop: options.stop,
+      ...otherOptions
     };
 
     console.log('Azure LLM: Creating chat stream with', messages.length, 'messages');
@@ -61,14 +64,17 @@ class AzureLLMProvider extends LLMProvider {
       await this.initialize();
     }
 
+    // Extract known parameters and remove potential conflicting ones
+    const { maxTokens, max_tokens, max_completion_tokens, ...otherOptions } = options;
+
     const messages = [{ role: 'user', content: prompt }];
     const response = await this.client.chat.completions.create({
       model: this.config.deployment,
       messages: messages,
       stream: false,
-      max_completion_tokens: options.maxTokens || 2000,
-      temperature: options.temperature || 0.5,
-      ...options
+      max_completion_tokens: maxTokens || 2000,
+      temperature: options.temperature,
+      ...otherOptions
     });
 
     return response.choices[0].message.content;

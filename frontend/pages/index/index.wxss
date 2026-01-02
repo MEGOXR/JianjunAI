@@ -1310,3 +1310,106 @@
   opacity: 0.8;
   transform: scale(0.98);
 }
+
+/* ==================== Markdown 样式 ==================== */
+
+/* 标题 */
+.md-header {
+  font-weight: bold;
+  margin: 16rpx 0 8rpx;
+  line-height: 1.4;
+  color: #333;
+}
+
+.h1 { font-size: 36rpx; border-bottom: 2rpx solid #eee; padding-bottom: 8rpx; }
+.h2 { font-size: 34rpx; border-bottom: 1rpx solid #eee; padding-bottom: 8rpx; }
+.h3 { font-size: 32rpx; }
+.h4, .h5, .h6 { font-size: 30rpx; }
+
+/* 段落 */
+.md-p {
+  margin: 8rpx 0;
+  line-height: 1.6;
+}
+
+/* 强调/加粗 */
+.md-bold {
+  font-weight: bold;
+  color: #000;
+}
+
+/* 列表 */
+.md-list {
+  margin: 8rpx 0 8rpx 0;
+}
+
+.md-list-item {
+  display: flex;
+  margin-bottom: 8rpx;
+  align-items: flex-start;
+}
+
+.md-list-marker {
+  margin-right: 12rpx;
+  color: #666;
+  flex-shrink: 0;
+  line-height: 1.6;
+}
+
+.md-list-content {
+  flex: 1;
+  line-height: 1.6;
+}
+
+/* 表格容器 - 支持横向滚动 */
+.md-table-wrapper {
+  width: 100%;
+  margin: 16rpx 0;
+  border-radius: 12rpx;
+  border: 1rpx solid #eee;
+  background-color: #fff;
+  overflow: hidden; /* 防止圆角溢出 */
+}
+
+.md-table-scroll-view {
+  width: 100%;
+}
+
+.md-table {
+  display: table;
+  width: auto; /* 允许表格根据内容自动撑开宽度，触发布局滚动 */
+  min-width: 100%; /* 至少占满容器 */
+  border-collapse: collapse;
+}
+
+.md-table-row {
+  display: table-row;
+  border-bottom: 1rpx solid #eee;
+}
+
+.md-table-row:last-child {
+  border-bottom: none;
+}
+
+.md-table-cell {
+  display: table-cell;
+  padding: 16rpx 20rpx;
+  border-right: 1rpx solid #eee;
+  text-align: left;
+  vertical-align: middle;
+  font-size: 28rpx;
+  line-height: 1.4;
+  white-space: normal; /* 允许单元格内文字换行，避免太宽 */
+  word-break: break-all;
+  min-width: 160rpx; /* 最小宽度，确保不会挤在一起 */
+}
+
+.md-table-cell:last-child {
+  border-right: none;
+}
+
+/* 表头样式 */
+.md-table-row.header {
+  background-color: #f8f9fa;
+  font-weight: bold;
+}

@@ -19,6 +19,7 @@
     "@azure/storage-blob": "^12.29.1",
     "@memobase/memobase": "npm:@jsr/memobase__memobase@^0.0.18",
     "@supabase/supabase-js": "^2.89.0",
+    "applicationinsights": "^3.12.1",
     "axios": "^1.7.9",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

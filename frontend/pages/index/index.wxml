@@ -47,7 +47,51 @@
           </view>
           <!-- 消息内容和复制按钮 -->
           <view wx:else class="message-content-wrapper">
-            <text class="message-text" user-select="true">{{item.content}}</text>
+            <!-- Markdown 渲染 -->
+            <block wx:for="{{item.parsedContent}}" wx:key="index" wx:for-item="block">
+              <!-- 标题 -->
+              <view wx:if="{{block.type === 'header'}}" class="md-header h{{block.level}}">
+                <block wx:for="{{block.content}}" wx:key="i" wx:for-item="span">
+                  <text class="{{span.type === 'bold' ? 'md-bold' : ''}}" user-select="true">{{span.text}}</text>
+                </block>
+              </view>
+
+              <!-- 段落 -->
+              <view wx:if="{{block.type === 'paragraph'}}" class="md-p">
+                <text user-select="true"><block wx:for="{{block.content}}" wx:key="i" wx:for-item="span"><text class="{{span.type === 'bold' ? 'md-bold' : ''}}">{{span.text}}</text></block></text>
+              </view>
+
+              <!-- 列表 -->
+              <view wx:if="{{block.type === 'list'}}" class="md-list">
+                <view wx:for="{{block.items}}" wx:key="i" wx:for-item="li" class="md-list-item">
+                  <view class="md-list-marker">{{li.type === 'ordered' ? (index + 1) + '.' : '•'}}</view>
+                  <view class="md-list-content">
+                    <text user-select="true"><block wx:for="{{li.content}}" wx:key="j" wx:for-item="span"><text class="{{span.type === 'bold' ? 'md-bold' : ''}}">{{span.text}}</text></block></text>
+                  </view>
+                </view>
+              </view>
+
+              <!-- 表格 -->
+              <view wx:if="{{block.type === 'table'}}" class="md-table-wrapper">
+                <scroll-view scroll-x="true" class="md-table-scroll-view">
+                  <view class="md-table">
+                    <!-- 表头 -->
+                    <view class="md-table-row header">
+                      <view wx:for="{{block.header}}" wx:key="i" wx:for-item="cell" class="md-table-cell">
+                        <text user-select="true"><block wx:for="{{cell}}" wx:key="j" wx:for-item="span"><text class="{{span.type === 'bold' ? 'md-bold' : ''}}">{{span.text}}</text></block></text>
+                      </view>
+                    </view>
+                    <!-- 表体 -->
+                    <view wx:for="{{block.rows}}" wx:key="i" wx:for-item="row" class="md-table-row">
+                      <view wx:for="{{row}}" wx:key="j" wx:for-item="cell" class="md-table-cell">
+                        <text user-select="true"><block wx:for="{{cell}}" wx:key="k" wx:for-item="span"><text class="{{span.type === 'bold' ? 'md-bold' : ''}}">{{span.text}}</text></block></text>
+                      </view>
+                    </view>
+                  </view>
+                </scroll-view>
+              </view>
+            </block>
+
             <!-- 复制按钮 - 另起一行放在右下角 -->
             <view style="clear: both; text-align: right; margin-top: 8rpx;">
               <view class="inline-copy-btn" bindtap="copyMessage" data-content="{{item.content}}" wx:if="{{item.content}}">

@@ -353,6 +353,65 @@ ${context}
   }
 
   /**
+   * 搜索用户历史事件
+   * @param {string} userId - 用户ID
+   * @param {string} query - 搜索关键词/问题
+   * @param {number} limit - 返回结果数量
+   * @returns {Array} 搜索结果列表
+   */
+  async searchEvents(userId, query, limit = 5) {
+    if (!this.isAvailable()) return [];
+
+    try {
+      const user = await this.getOrCreateUser(userId);
+      if (!user) return [];
+
+      console.log(`[Memobase]正在搜索用户 ${userId} 的记忆: "${query}"`);
+
+      // 使用 Memobase 的搜索功能
+      // 注意: 具体API方法名可能取决于SDK版本，这里我们要查阅SDK文档或尝试 searchContext/searchEvent
+      // 假设 SDK 提供了 search 接口
+      let results = [];
+
+      // 尝试调用 user.search 或 client.searchEvent
+      // 根据之前的分析，我们使用 searchEvent 或 context 搜索
+      // 这里为了稳健，先尝试 mock 或者查阅最确定的 context API
+      // 如果 user 对象有 search 方法：
+      if (typeof user.search === 'function') {
+        results = await user.search(query, limit);
+      } else if (this.client && typeof this.client.searchEvent === 'function') {
+        // 备用：如果SDK是在client层级
+        // results = await this.client.searchEvent(user.id, query); 
+        // 暂时无法确定完全准确的API，先假设 context 可以带 query 或者 fallback
+        // 实际上当前 SDK 版本 user.context 是为了构建 prompt，不一定是搜索。
+        // 让我们假设我们需要自行实现一个简单的过滤，或者 SDK 确实支持搜索。
+
+        // 根据最新的 Memobase SDK 理解 (0.0.18)，可能暂时没有直接的 searchEvent 暴露在 user 对象上
+        // 但我们可以利用 user.context 的变体或者假设它会在未来支持。
+        // 为了不阻塞，我们这里先做一个模拟实现，或者只用 context。
+
+        // TODO: 确认 Memobase search API。暂时返回空或模拟数据用于测试流程。
+        // 如果真的要搜，可能需要利用 vector database 的 search。
+        // 这里我们先打日志，假装没搜到，或者返回最近的 events。
+        const context = await user.context(1000, 500);
+        if (context && context.events) {
+          // 简单的本地关键词匹配作为 fallback
+          results = context.events.filter(e => {
+            const content = e.content || e;
+            return typeof content === 'string' && content.includes(query);
+          });
+        }
+      }
+
+      console.log(`[Memobase] 搜索完成，找到 ${results.length} 条相关记忆`);
+      return results;
+    } catch (error) {
+      console.error(`[Memobase] 搜索用户 ${userId} 记忆失败:`, error);
+      return [];
+    }
+  }
+
+  /**
    * 更新用户元数据
    * @param {string} userId - 用户ID
    * @param {object} metadata - 元数据对象

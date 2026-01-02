@@ -13,6 +13,8 @@ const LOADING_TEXTS = [
   "正在组织语言..."
 ];
 
+const markdown = require('../../../utils/markdown.js');
+
 class MessageManager {
   constructor(pageInstance) {
     this.page = pageInstance;
@@ -133,9 +135,10 @@ class MessageManager {
       return;
     }
 
-    // 节流刷新UI (从80ms降低到40ms，提升流畅度)
+    // 节流刷新UI (从40ms增加到100ms，减少setData频率，避免界面卡顿)
+    // 后端已经有了 StreamSmoother，前端不需要过度频繁刷新
     if (!this._stream.timer) {
-      this._stream.timer = setTimeout(() => this.flushStream(), 40);
+      this._stream.timer = setTimeout(() => this.flushStream(), 100);
     }
   }
 
@@ -196,8 +199,12 @@ class MessageManager {
       const mergedContent = this.page.data.messages[idx].content + this._stream.buf;
       this._stream.buf = '';
 
+      // 解析 Markdown
+      const parsedContent = markdown.parse(mergedContent);
+
       this.page.setData({
-        [`messages[${idx}].content`]: mergedContent
+        [`messages[${idx}].content`]: mergedContent,
+        [`messages[${idx}].parsedContent`]: parsedContent
       }, () => {
         this.page.scrollController.handleStreamingScroll(idx, mergedContent);
       });
@@ -258,40 +265,63 @@ class MessageManager {
     // 停止文案轮播（如果还在运行）
     this.stopLoadingTextRotation();
 
-    // 移除所有加载消息
-    let currentMessages = [...this.page.data.messages];
-    const beforeCount = currentMessages.length;
-    currentMessages = currentMessages.filter(msg => !msg.isLoading);
-    const removedCount = beforeCount - currentMessages.length;
-    if (removedCount > 0) {
-      console.log(`已移除 ${removedCount} 个加载消息`);
-    }
-
-    this.page.setData({
-      messages: currentMessages,
-      isGenerating: false
-    });
-
     const app = getApp();
-    const msg = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-      suggestions: []
-    };
+    const currentMessages = this.page.data.messages;
 
-    // 设置时间显示
-    this.setMessageTimeDisplay(msg, currentMessages);
-    msg.formattedTime = app.getFormattedTime(msg.timestamp);
+    // 寻找最后的加载消息索引
+    const loadingIndex = currentMessages.findIndex(msg => msg.isLoading && msg.role === 'assistant');
 
-    currentMessages.push(msg);
-    const idx = currentMessages.length - 1;
-    this.page.setData({
-      messages: currentMessages,
-      isConnecting: true
-    });
-    this._stream.targetIndex = idx;
+    if (loadingIndex !== -1) {
+      // ✅ 找到了加载消息，直接原地变身
+      console.log(`♻️ 复用加载消息作为AI消息 (Index: ${loadingIndex})`);
+
+      const msg = currentMessages[loadingIndex];
+
+      // 更新该消息属性
+      const updates = {
+        [`messages[${loadingIndex}].isLoading`]: false,
+        [`messages[${loadingIndex}].content`]: '',
+        [`messages[${loadingIndex}].loadingText`]: null, // 清除轮播文案
+        [`messages[${loadingIndex}].timestamp`]: Date.now(), // 更新为生成时间
+        [`messages[${loadingIndex}].suggestions`]: [],
+        isGenerating: false,
+        isConnecting: true
+      };
+
+      // 重新计算时间显示（虽然通常还是接着上一条，但为了严谨）
+      this.setMessageTimeDisplay(msg, currentMessages);
+      updates[`messages[${loadingIndex}].formattedTime`] = app.getFormattedTime(msg.timestamp);
+      updates[`messages[${loadingIndex}].formattedDate`] = msg.formattedDate;
+
+      // 执行因地更新
+      this.page.setData(updates);
+
+      // 设置流式目标索引
+      this._stream.targetIndex = loadingIndex;
+    } else {
+      // ⚠️ 没找到加载消息（罕见情况），降级为追加新消息
+      console.warn('⚠️ 未找到加载消息，创建新AI消息');
+
+      const msg = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        suggestions: []
+      };
+
+      this.setMessageTimeDisplay(msg, currentMessages);
+      msg.formattedTime = app.getFormattedTime(msg.timestamp);
+
+      const newMessages = [...currentMessages, msg];
+      this.page.setData({
+        messages: newMessages,
+        isGenerating: false,
+        isConnecting: true
+      });
+
+      this._stream.targetIndex = newMessages.length - 1;
+    }
   }
 
   /**
@@ -453,6 +483,7 @@ class MessageManager {
 
       newMessages.push({
         ...msg,
+        parsedContent: msg.role === 'assistant' ? markdown.parse(msg.content) : null,
         formattedDate,
         formattedTime,
       });
@@ -516,23 +547,24 @@ class MessageManager {
 
     console.log('用户点击建议问题:', question);
 
-    // 立即隐藏建议问题
+    // 优化：合并 setData，减少渲染次数
     this.page.setData({
-      [`messages[${msgIndex}].suggestions`]: []
+      [`messages[${msgIndex}].suggestions`]: [], // 立即隐藏
+      userInput: question // 设置输入
     }, () => {
-      this.page.setData({
-        userInput: question
-      }, () => {
-        this.sendMessage();
-      });
+      // 这里的回调表示 UI 已经更新（建议消失，输入框有字）
+      // 立即发送
+      this.sendMessage();
     });
 
-    // 更新本地存储
-    const messages = this.page.data.messages;
-    if (messages[msgIndex] && messages[msgIndex].suggestions) {
-      messages[msgIndex].suggestions = [];
-      wx.setStorageSync('messages', messages);
-    }
+    // 更新本地存储 (异步)
+    setTimeout(() => {
+      const messages = this.page.data.messages;
+      if (messages[msgIndex] && messages[msgIndex].suggestions) {
+        messages[msgIndex].suggestions = [];
+        wx.setStorageSync('messages', messages);
+      }
+    }, 0);
   }
 
   /**
