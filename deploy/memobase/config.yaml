@@ -14,7 +14,7 @@ llm_model: "gpt-5.2-chat"
 # Embedding Config
 embedding_provider: "openai" # 必须填 openai，即使是用 Azure
 embedding_api_key: "{{AZURE_OPENAI_API_KEY}}"
-embedding_base_url: "{{AZURE_OPENAI_ENDPOINT}}"
+embedding_base_url: "{{AZURE_OPENAI_ENDPOINT}}/openai/deployments/embed-v-4-0"
 embedding_api_version: "2025-04-01-preview"
 embedding_model: "embed-v-4-0"
 
