@@ -1,45 +1,24 @@
-# Memobase Configuration
+# Memobase Configuration (Flat Structure)
 
-# 服务器配置 (保持默认)
-server:
-  host: "0.0.0.0"
-  port: 8019
-  log_level: "info"
+server_host: "0.0.0.0"
+server_port: 8019
+log_level: "info"
 
-# LLM 配置
-# 请打开您的 backend/.env 文件，找到对应的 Azure 配置填入下面
-llm:
-  provider: "azure_openai"
-  # 对应 .env 中的 AZURE_OPENAI_API_KEY
-  api_key: "{{AZURE_OPENAI_API_KEY}}"
-  
-  # 对应 .env 中的 AZURE_OPENAI_ENDPOINT
-  # 注意：必须以 https:// 开头，不带 /openai/deployments/... 后缀
-  # 示例: https://jianjun-ai.openai.azure.com/
-  base_url: "{{AZURE_OPENAI_ENDPOINT}}"
-  
-  # 对应 .env 中的 AZURE_OPENAI_API_VERSION
-  # 示例: 2024-02-15-preview
-  api_version: "2025-04-01-preview"
-  
-  # 对应 .env 中的 AZURE_OPENAI_DEPLOYMENT_NAME (用于聊天的模型，如 gpt-4o)
-  model: "gpt-5.2-chat"
+# LLM Config
+llm_provider: "azure_openai"
+llm_api_key: "{{AZURE_OPENAI_API_KEY}}"
+llm_base_url: "{{AZURE_OPENAI_ENDPOINT}}"
+llm_api_version: "2025-04-01-preview"
+llm_model: "gpt-5.2-chat"
 
-# 嵌入模型配置 (用于向量搜索)
-embedding:
-  provider: "azure_openai"
-  # 通常与上面 LLM 使用同一个 Key 和 Endpoint
-  api_key: "{{AZURE_OPENAI_API_KEY}}"
-  # 注意：去掉了末尾的 /openai/v1/，因为 SDK 会自动拼接
-  base_url: "{{AZURE_OPENAI_ENDPOINT}}"
-  api_version: "2025-04-01-preview"
-  
-  # Embedding 模型部署名称
-  model: "embed-v-4-0"
+# Embedding Config
+embedding_provider: "azure_openai"
+embedding_api_key: "{{AZURE_OPENAI_API_KEY}}"
+embedding_base_url: "{{AZURE_OPENAI_ENDPOINT}}"
+embedding_api_version: "2025-04-01-preview"
+embedding_model: "embed-v-4-0"
 
-# 鉴权配置 (保护 Memobase API)
-auth:
-  enabled: true
-  # 您的专属 API Key (相当于 Memobase 的访问密码)
-  # 请务必将这个值复制到 backend/.env 的 MEMOBASE_API_KEY 字段中
-  api_key: "mb_sk_73928174928374928374982374982374"
+# Auth Config
+auth_enabled: true
+# 您的专属 API Key
+api_key: "mb_sk_73928174928374928374982374982374"
