@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  memobase:
+    # 镜像来自您的 GitHub 仓库 (已自动配置为 megoxr/jianjunai)
+    image: ghcr.io/megoxr/jianjunai/memobase:latest
+    container_name: memobase
+    restart: always
+    ports:
+      - "8019:8019"
+    environment:
+      - DATABASE_URL=postgresql://memobase:memobase_password@postgres:5432/memobase
+      - REDIS_URL=redis://redis:6379/0
+      # 如果需要，可以在这里配置更多的环境变量，或者使用 config.yaml
+      - CONFIG_PATH=/app/config.yaml
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: memobase_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: memobase
+      POSTGRES_PASSWORD: memobase_password
+      POSTGRES_DB: memobase
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U memobase" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: memobase_redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
