@@ -20,7 +20,8 @@ services:
       - redis
 
   postgres:
-    image: postgres:15-alpine
+    # 必须使用带 pgvector 插件的镜像，否则无法存取向量
+    image: pgvector/pgvector:pg16
     container_name: memobase_postgres
     restart: always
     environment:
