@@ -472,16 +472,17 @@ exports.sendMessage = async (ws, prompt, images = []) => {
               const followUpSystemPrompt = `${promptService.getSystemPrompt()}
 
 【重要插播】
-你刚才已经对用户说了："${alreadySpoken}"。
-然后你觉得需要搜索记忆，刚刚系统帮你搜索到了以下信息：
+系统刚帮你搜索到了以下信息：
 ${searchResultContext}
 
-请基于以上搜索结果，**接着你刚才的话**（"${alreadySpoken}"）继续把话说完。
-不要重复之前的话，直接输出后续内容。确保语音连贯，就像一个人中间停顿了一下思考后接着说一样。`;
+请基于以上搜索结果，接着你刚才的话继续把话说完。确保语音连贯，就像一个人中间停顿了一下思考后接着说一样。`;
 
+              // 使用 assistant prefill：将已说内容作为 assistant 消息预填充
+              // 这样 LLM 会认为它已经输出了这部分内容，直接接着继续生成，不会重复
               messagesForLlm = [
                 { role: 'system', content: followUpSystemPrompt },
-                ...history.filter(m => m.role !== 'system')
+                ...history.filter(m => m.role !== 'system'),
+                { role: 'assistant', content: alreadySpoken }
               ];
 
               // 第二次调用 LLM
@@ -490,62 +491,23 @@ ${searchResultContext}
 
               smoother.resume();
 
-              let overlapBuffer = '';
-              let isCheckingOverlap = true;
+              // 定义清理函数，确保一致性
+              const cleanText = (text) => text
+                .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')
+                .replace(/\*\*([^*]+)\*\*/g, '「$1」')
+                .replace(/\*([^*]+)\*/g, '$1')
+                .replace(/#{1,6}\s*/g, '')
+                .replace(/^\s*[-*+]\s+/gm, '• ')
+                .replace(/`([^`]+)`/g, '「$1」');
 
+              // 由于使用了 assistant prefill，LLM 会直接接着已说内容继续生成
+              // 不需要复杂的去重逻辑，直接输出即可
               for await (const chunk2 of secondStream) {
                 const content2 = chunk2.choices?.[0]?.delta?.content;
                 if (content2) {
                   tokenCount++;
-
-                  // 定义清理函数，确保一致性
-                  const cleanText = (text) => text
-                    .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')
-                    .replace(/\*\*([^*]+)\*\*/g, '「$1」')
-                    .replace(/\*([^*]+)\*/g, '$1')
-                    .replace(/#{1,6}\s*/g, '')
-                    .replace(/^\s*[-*+]\s+/gm, '• ')
-                    .replace(/`([^`]+)`/g, '「$1」');
-
-                  if (isCheckingOverlap) {
-                    overlapBuffer += content2;
-
-                    // 检查是否完全包含在 alreadySpoken 中（或 alreadySpoken 包含 buffer）
-                    // 情况1: buffer 长度超过了 alreadySpoken，检查前缀是否匹配
-                    if (overlapBuffer.length > alreadySpoken.length) {
-                      if (overlapBuffer.startsWith(alreadySpoken)) {
-                        // 发现重复部分，去除它，保留剩余的新内容
-                        const newContent = overlapBuffer.substring(alreadySpoken.length);
-                        if (newContent) {
-                          assistantResponse += newContent;
-                          smoother.push(cleanText(newContent));
-                        }
-                        // 重复部分已被处理，停止检查
-                        isCheckingOverlap = false;
-                      } else {
-                        // 内容不匹配，说明没有重复（或者 LLM 改口了），全部输出
-                        assistantResponse += overlapBuffer;
-                        smoother.push(cleanText(overlapBuffer));
-                        isCheckingOverlap = false;
-                      }
-                    }
-                    // 情况2: buffer 长度还不够，检查是否是 alreadySpoken 的前缀
-                    else {
-                      if (alreadySpoken.startsWith(overlapBuffer)) {
-                        // 目前为止都匹配，继续缓冲，不输出
-                        // 注意：这里不添加到 assistantResponse，避免重复记录
-                      } else {
-                        // 发现不匹配，立即全部输出
-                        assistantResponse += overlapBuffer;
-                        smoother.push(cleanText(overlapBuffer));
-                        isCheckingOverlap = false;
-                      }
-                    }
-                  } else {
-                    // 非检查模式，直接输出
-                    assistantResponse += content2;
-                    smoother.push(cleanText(content2));
-                  }
+                  assistantResponse += content2;
+                  smoother.push(cleanText(content2));
                 }
               }
 
