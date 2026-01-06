@@ -408,6 +408,10 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 
       if (openBracketIndex === -1) {
         // 没有 '['，安全输出
+        // 额外检查：确保不会意外输出 SEARCH 标记
+        if (searchBuffer.toUpperCase().includes('SEARCH')) {
+          console.warn(`⚠️ 警告：尝试输出包含SEARCH的内容: "${searchBuffer}"`);
+        }
         smoother.push(searchBuffer);
         searchBuffer = '';
       } else {

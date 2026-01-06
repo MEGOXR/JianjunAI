@@ -30,6 +30,14 @@ class StreamSmoother {
     push(text) {
         if (!text) return;
 
+        // 安全检查：过滤掉 [SEARCH: xxx] 标记（不应该显示给用户）
+        if (text.includes('[SEARCH') || text.includes('SEARCH]')) {
+            console.warn(`🚫 StreamSmoother 过滤掉 SEARCH 标记: "${text}"`);
+            // 移除 [SEARCH: xxx] 标记
+            text = text.replace(/\[SEARCH[:\s]*[^\]]*\]/gi, '');
+            if (!text.trim()) return; // 如果过滤后为空，不处理
+        }
+
         // 将文本拆分为字符推入缓冲
         const chars = text.split('');
         this.buffer.push(...chars);

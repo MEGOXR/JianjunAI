@@ -63,8 +63,12 @@
 
               <!-- 列表 -->
               <view wx:if="{{block.type === 'list'}}" class="md-list">
-                <view wx:for="{{block.items}}" wx:key="i" wx:for-item="li" class="md-list-item">
-                  <view class="md-list-marker">{{li.type === 'ordered' ? (index + 1) + '.' : '•'}}</view>
+                <view wx:for="{{block.items}}" wx:key="i" wx:for-item="li" class="md-list-item" style="margin-left: {{li.level * 1}}em;">
+                  <!-- 根据层级显示不同的列表标记 -->
+                  <view class="md-list-marker">
+                    <block wx:if="{{li.type === 'ordered'}}">{{li.level === 0 ? (index + 1) + '.' : (li.level === 1 ? (index + 1) + '.' : (index + 1) + '.')}}</block>
+                    <block wx:else>{{li.level === 0 ? '•' : (li.level === 1 ? '◦' : '▪')}}</block>
+                  </view>
                   <view class="md-list-content">
                     <text user-select="true"><block wx:for="{{li.content}}" wx:key="j" wx:for-item="span"><text class="{{span.type === 'bold' ? 'md-bold' : ''}}">{{span.text}}</text></block></text>
                   </view>

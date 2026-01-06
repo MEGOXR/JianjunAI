@@ -72,13 +72,16 @@ function parseMarkdown(text) {
         };
       }
 
+      const level = Math.floor(indent / 2);
+
       currentList.items.push({
         type: type,
         indent: indent,
+        level: level,
         content: content
       });
       continue;
-    } else if (currentList) {
+    } else if (currentList && trimmedLine.length > 0) {
       result.push(currentList);
       currentList = null;
     }
