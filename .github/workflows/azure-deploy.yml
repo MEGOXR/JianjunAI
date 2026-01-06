@@ -6,8 +6,10 @@ name: Build and deploy Node.js app to Azure Web App - AIPlasticSurgury
 on:
   push:
     branches:
-      - main  # 修复为main分支，确保推送时触发部署
-  workflow_dispatch:
+      - main
+    paths:
+      - 'backend/**'  # 只在后端代码变化时触发
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   build:
