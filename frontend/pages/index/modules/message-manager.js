@@ -510,7 +510,21 @@ class MessageManager {
       return;
     }
 
-    console.log('✅ 处理建议问题:', suggestions);
+    // 前端防御性过滤：排除可能是格式说明或系统指令的内容
+    const blacklist = ['需要生成', '不需要生成', '无需生成', 'suggestions', 'questions', '问题1', '问题2'];
+    const validSuggestions = suggestions.filter(s =>
+      typeof s === 'string' &&
+      s.length >= 4 &&
+      s.length <= 20 &&
+      !blacklist.some(word => s.includes(word))
+    );
+
+    if (validSuggestions.length === 0) {
+      console.log('❌ 过滤后建议问题为空:', suggestions);
+      return;
+    }
+
+    console.log('✅ 处理建议问题:', validSuggestions);
 
     // 找到最后一条AI消息
     const messages = this.page.data.messages;
@@ -524,14 +538,14 @@ class MessageManager {
     }
 
     if (lastAiMessageIndex >= 0) {
-      console.log(`📍 在消息索引 ${lastAiMessageIndex} 添加建议问题:`, suggestions);
+      console.log(`📍 在消息索引 ${lastAiMessageIndex} 添加建议问题:`, validSuggestions);
       this.page.setData({
-        [`messages[${lastAiMessageIndex}].suggestions`]: suggestions
+        [`messages[${lastAiMessageIndex}].suggestions`]: validSuggestions
       });
 
       // 更新本地存储
       const updatedMessages = [...messages];
-      updatedMessages[lastAiMessageIndex].suggestions = suggestions;
+      updatedMessages[lastAiMessageIndex].suggestions = validSuggestions;
       wx.setStorageSync('messages', updatedMessages);
     } else {
       console.log('❌ 没有找到适合添加建议问题的AI消息');

@@ -121,17 +121,15 @@ class SuggestionService {
 - 涵盖不同角度（效果、恢复期、注意事项、技术细节、适合人群等）
 - 不要包含价格、费用、多少钱等金钱相关的问题
 
-返回格式：
-- 需要生成：["问题1？", "问题2？"]
-- 不需要生成：[]
-
 对话历史：
 ${historyText}
 
 杨院长最新回复：
 ${lastResponse}
 
-请根据以上对话，返回JSON格式的结果：`;
+【重要】你只需要返回一个纯JSON数组，不要有任何其他文字或说明！
+- 生成建议：["恢复期要多久？", "有什么注意事项？"]
+- 不生成：[]`;
   }
 
   /**
@@ -217,8 +215,17 @@ ${lastResponse}
    * 清理和验证建议问题
    */
   cleanSuggestions(suggestions) {
+    // 黑名单：过滤掉可能是格式说明或系统指令的内容
+    const blacklist = [
+      '需要生成', '不需要生成', '无需生成',
+      'suggestions', 'questions', 'result',
+      '问题1', '问题2', '例如', '示例'
+    ];
+
     return suggestions
       .filter(s => typeof s === 'string' && s.trim().length > 0)
+      // 过滤黑名单内容
+      .filter(s => !blacklist.some(word => s.includes(word)))
       .map(s => {
         let cleaned = s.trim();
         // 确保问题以问号结尾
@@ -245,6 +252,21 @@ ${lastResponse}
     // 随机选择一组备用问题
     const randomIndex = Math.floor(Math.random() * fallbacks.length);
     return fallbacks[randomIndex];
+  }
+
+  /**
+   * 获取初始建议问题（用于问候语后显示）
+   */
+  getInitialSuggestions() {
+    const initialSuggestions = [
+      ['想了解什么项目？', '有什么问题想咨询？'],
+      ['想改善哪个部位？', '有什么美丽愿望？'],
+      ['想做哪种类型的项目？', '有具体的问题吗？']
+    ];
+
+    // 随机选择一组初始问题
+    const randomIndex = Math.floor(Math.random() * initialSuggestions.length);
+    return initialSuggestions[randomIndex];
   }
 }
 
