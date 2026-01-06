@@ -7,7 +7,7 @@ services:
     container_name: memobase
     restart: always
     ports:
-      - "8019:8019"
+      - "8019:8000"  # 外部8019 -> 容器内部8000
     environment:
       - DATABASE_URL=postgresql://memobase:memobase_password@postgres:5432/memobase
       - REDIS_URL=redis://redis:6379/0
