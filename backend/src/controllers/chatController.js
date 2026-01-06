@@ -234,28 +234,43 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 
     // 5. 初始化或获取对话历史
     timer.mark('开始初始化对话历史');
-    if (!chatHistories.has(userId)) {
-      userDataPromise.then(userData => {
-        const savedHistory = userData?.chatHistory || [];
-        if (savedHistory.length > 0 && !chatHistories.has(userId)) {
-          chatHistories.set(userId, {
-            messages: savedHistory,
-            lastAccess: Date.now()
-          });
-          timer.mark('从存储加载历史记录', { historyLength: savedHistory.length });
-        }
-      }).catch(console.error);
+    let loadedFromSupabase = false;
 
+    if (!chatHistories.has(userId)) {
+      // 尝试从 userDataService 获取 (本地缓存)
+      let savedHistory = [];
+      try {
+        const userData = await userDataPromise;
+        savedHistory = userData?.chatHistory || [];
+      } catch (e) {
+        console.warn('获取本地用户数据失败:', e.message);
+      }
+
+      // 如果本地没有历史，尝试从 Supabase 获取 (持久化存储)
+      // 这解决了 Azure重新部署后本地文件丢失导致上下文丢失的问题
+      if (savedHistory.length === 0) {
+        try {
+          savedHistory = await memoryService.getLegacyChatHistory(userId, 10);
+          if (savedHistory.length > 0) {
+            loadedFromSupabase = true;
+          }
+        } catch (e) {
+          console.warn('从Supabase获取历史失败:', e.message);
+        }
+      }
+
+      // 初始化内存中的历史记录
       chatHistories.set(userId, {
         messages: [
           {
             role: "system",
             content: enhancedSystemPrompt
-          }
+          },
+          ...savedHistory // 恢复历史消息
         ],
         lastAccess: Date.now()
       });
-      timer.mark('创建新的对话历史');
+      timer.mark('创建新的对话历史', { source: loadedFromSupabase ? 'Supabase' : 'Local/Empty' });
     } else {
       // 更新现有历史中的系统提示词
       const historyData = chatHistories.get(userId);
@@ -264,10 +279,11 @@ exports.sendMessage = async (ws, prompt, images = []) => {
       }
     }
 
-    // 6. 更新历史记录
+    // 6. 获取当前内存中的历史记录
     let historyData = chatHistories.get(userId);
     timer.mark('获取对话历史完成', { messageCount: historyData?.messages?.length });
 
+    // 确保格式正确
     if (Array.isArray(historyData)) {
       chatHistories.set(userId, {
         messages: historyData,
@@ -279,10 +295,7 @@ exports.sendMessage = async (ws, prompt, images = []) => {
     } else {
       historyData = {
         messages: [
-          {
-            role: "system",
-            content: promptService.getSystemPrompt()
-          }
+          { role: "system", content: promptService.getSystemPrompt() }
         ],
         lastAccess: Date.now()
       };
@@ -369,10 +382,59 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 
     let assistantResponse = '';
     let searchBuffer = ''; // 用于检测 [SEARCH: ...] 的临时缓冲
-    let currentInputMessages = [
-      { role: 'system', content: promptService.getSystemPrompt() },
-      ...history.filter(m => m.role !== 'system')
-    ];
+
+    // ⏱️ 时间感知计算
+    // 计算距离上次会话的时间，并注入到 Prompt 中
+    let timeAwarenessPrompt = '';
+    try {
+      // 尝试从 userDataService 获取最后访问时间
+      // 注意：此时 history 已经被更新了当前消息，所以要看更早的时间可能需要查 Supabase 或 user metadata
+      // 简化逻辑：如果在 history 初始化时发现是 loadedFromSupabase，或者 chatHistories 虽然有值但是 lastAccess 很久以前
+
+      // 我们通过 userDataService 获取的原始 data 来判断
+      const userData = await userDataPromise;
+      if (userData && userData.lastVisit) {
+        const lastVisitDate = new Date(userData.lastVisit);
+        const now = new Date();
+        const diffHours = (now - lastVisitDate) / (1000 * 60 * 60);
+
+        if (diffHours > 24) {
+          const days = Math.floor(diffHours / 24);
+          const dateStr = lastVisitDate.toLocaleDateString('zh-CN');
+          timeAwarenessPrompt = `
+[System Note: Context Awareness]
+用户上一次对话是在 ${days} 天前 (${dateStr})。
+如果用户是回头客，请在回复中自然地体现出"好久不见"或承接上次话题的感觉，不要表现得像第一次认识一样。
+但如果不确定，就保持礼貌专业即可。`;
+          console.log(`[TimeAwareness] 检测到用户 ${days} 天未访问，注入时间感知提示`);
+        }
+      }
+    } catch (e) {
+      console.warn('时间感知计算失败:', e);
+    }
+
+    // 构建用于本次请求的消息列表
+    // 注意：history 包含 [System, ...Previous, User]
+    // 我们要在 System Prompt 之后插入 timeAwarenessPrompt，或者直接拼在 System Prompt 里
+    // 为了不污染持久化的 system prompt，我们构建一个临时的 messages 数组
+
+    let messagesForLlm = [...history]; // 浅拷贝
+
+    // 如果有时间感知提示，且 history[0] 是 system，则追加提示
+    // 或者作为第二条 system 消息插入
+    if (timeAwarenessPrompt && messagesForLlm.length > 0 && messagesForLlm[0].role === 'system') {
+      // 更新第一条 System Message 的内容 (仅对本次请求生效，不修改 history 对象)
+      messagesForLlm[0] = {
+        ...messagesForLlm[0],
+        content: messagesForLlm[0].content + timeAwarenessPrompt
+      };
+    }
+
+    // 过滤掉不可接受的 role (防守性编程)
+    messagesForLlm = messagesForLlm.filter(m => m.role === 'system' || m.role === 'user' || m.role === 'assistant');
+
+    // 准备进入循环
+    let currentInputMessages = messagesForLlm;
 
     let searchAttemptCount = 0;
     const MAX_SEARCH_ATTEMPTS = 3;

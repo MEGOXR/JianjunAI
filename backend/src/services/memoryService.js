@@ -219,6 +219,27 @@ class MemoryService {
   }
 
   /**
+   * 获取兼容旧格式的聊天记录（用于初始化）
+   * @param {string} wechatOpenId - 微信OpenID
+   * @param {number} limit - 最大消息数
+   * @returns {Array} 消息列表 [{ role, content }, ...]
+   */
+  async getLegacyChatHistory(wechatOpenId, limit = 10) {
+    if (this.useSupabase && supabaseService.isAvailable()) {
+      try {
+        const messages = await supabaseService.getRecentMessages(wechatOpenId, limit);
+        if (messages && messages.length > 0) {
+          console.log(`[MemoryService] 从 Supabase 恢复了 ${messages.length} 条历史消息`);
+          return messages;
+        }
+      } catch (error) {
+        console.error('[MemoryService] 从 Supabase 恢复历史失败:', error);
+      }
+    }
+    return [];
+  }
+
+  /**
    * 获取增强的系统提示词（包含用户记忆）
    * @param {string} wechatOpenId - 微信OpenID
    * @returns {string} 增强后的系统提示词
