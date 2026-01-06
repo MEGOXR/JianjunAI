@@ -474,6 +474,7 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 
               // 构建后续 Prompt
               const alreadySpoken = assistantResponse.trim();
+              console.log(`📝 已说内容 (${alreadySpoken.length}字): "${alreadySpoken.substring(0, 50)}..."`);
               const followUpSystemPrompt = `${promptService.getSystemPrompt()}
 
 【重要插播】
@@ -491,10 +492,13 @@ ${searchResultContext}
               ];
 
               // 第二次调用 LLM
+              console.log('🚀 准备第二次调用LLM...');
               timer.mark('开始第二次调用LLM (带记忆)');
               const secondStream = await processStream(messagesForLlm);
+              console.log('✅ 第二次LLM流已创建');
 
               smoother.resume();
+              console.log('▶️ smoother已恢复');
 
               // 定义清理函数，确保一致性
               const cleanText = (text) => text
@@ -525,7 +529,8 @@ ${searchResultContext}
               break; // 退出外层流循环
 
             } catch (err) {
-              console.error('执行搜索流程失败:', err);
+              console.error('❌ 执行搜索流程失败:', err);
+              console.error('❌ 错误详情:', err.stack || err.message);
               smoother.resume(); // 出错也要恢复
               // 搜索失败时，输出一个友好的提示继续对话
               const fallbackMsg = '抱歉，我暂时想不起来了，不过没关系，你可以再提醒我一下~';
