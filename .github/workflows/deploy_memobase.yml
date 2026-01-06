@@ -59,21 +59,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 在上传前，把配置文件里的占位符替换成真实的 Secrets
-      - name: Inject Secrets into config.yaml
+      # 创建 .env 文件，包含敏感信息
+      # Embedding 使用 Azure OpenAI v1 兼容端点: https://{resource}.openai.azure.com/openai/v1/
+      - name: Create .env file with secrets
         run: |
-          sed -i 's|{{AZURE_OPENAI_API_KEY}}|${{ secrets.AZURE_OPENAI_API_KEY }}|g' deploy/memobase/config.yaml
-          sed -i 's|{{AZURE_OPENAI_ENDPOINT}}|${{ secrets.AZURE_OPENAI_ENDPOINT }}|g' deploy/memobase/config.yaml
-          # 替换为您在 config.yaml 里写死的那个 "mb_sk_..." Key，如果想也用 Secret 管理的话
-          # 目前我们先只处理必须隐藏的 Azure Key
-      
-      - name: Copy docker-compose to server
+          ENDPOINT="${{ secrets.AZURE_OPENAI_ENDPOINT }}"
+
+          # 从端点 URL 提取资源名 (支持 .openai.azure.com 和 .cognitiveservices.azure.com)
+          # 例如: https://aiplasticsurgury.cognitiveservices.azure.com/ -> aiplasticsurgury
+          RESOURCE_NAME=$(echo "$ENDPOINT" | sed -E 's|https://([^.]+)\..*|\1|')
+
+          # 构建 v1 兼容端点 (总是使用 .openai.azure.com 格式)
+          EMBEDDING_URL="https://${RESOURCE_NAME}.openai.azure.com/openai/v1/"
+
+          echo "Extracted resource name: $RESOURCE_NAME"
+          echo "Embedding URL: $EMBEDDING_URL"
+
+          cat > deploy/memobase/.env << EOF
+          AZURE_OPENAI_API_KEY=${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT=${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_EMBEDDING_URL=${EMBEDDING_URL}
+          EOF
+
+      - name: Copy files to server
         uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.AZURE_HOST_IP }}
           username: azureuser
           key: ${{ secrets.AZURE_SSH_KEY }}
-          source: "deploy/memobase/docker-compose.yml,deploy/memobase/config.yaml"
+          source: "deploy/memobase/docker-compose.yml,deploy/memobase/config.yaml,deploy/memobase/.env"
           target: "/home/azureuser/memobase"
           strip_components: 2
 

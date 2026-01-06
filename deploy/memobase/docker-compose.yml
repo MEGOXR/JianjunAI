@@ -11,8 +11,14 @@ services:
     environment:
       - DATABASE_URL=postgresql://memobase:memobase_password@postgres:5432/memobase
       - REDIS_URL=redis://redis:6379/0
-      # 如果需要，可以在这里配置更多的环境变量，或者使用 config.yaml
       - CONFIG_PATH=/app/config.yaml
+      # Azure OpenAI 配置 - 通过环境变量覆盖 config.yaml 中的 placeholder
+      # LLM 配置
+      - MEMOBASE_LLM_API_KEY=${AZURE_OPENAI_API_KEY}
+      - MEMOBASE_LLM_BASE_URL=${AZURE_OPENAI_ENDPOINT}
+      # Embedding 配置
+      - MEMOBASE_EMBEDDING_API_KEY=${AZURE_OPENAI_API_KEY}
+      - MEMOBASE_EMBEDDING_BASE_URL=${AZURE_OPENAI_EMBEDDING_URL}
     volumes:
       - ./config.yaml:/app/config.yaml
     depends_on:

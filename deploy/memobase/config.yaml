@@ -5,18 +5,21 @@ server_port: 8019
 log_level: "info"
 
 # LLM Config
+# API key 和 endpoint 通过环境变量 MEMOBASE_LLM_API_KEY 和 MEMOBASE_LLM_BASE_URL 覆盖
 llm_provider: "azure_openai"
-llm_api_key: "{{AZURE_OPENAI_API_KEY}}"
-llm_base_url: "{{AZURE_OPENAI_ENDPOINT}}"
+llm_api_key: "placeholder_will_be_overridden"
+llm_base_url: "placeholder_will_be_overridden"
 llm_api_version: "2025-04-01-preview"
 llm_model: "gpt-5.2-chat"
 
 # Embedding Config
-embedding_provider: "openai" # 必须填 openai，即使是用 Azure
-embedding_api_key: "{{AZURE_OPENAI_API_KEY}}"
-embedding_base_url: "https://aiplasticsurgury.cognitiveservices.azure.com/openai/deployments/text-embedding-3-large"
-embedding_api_version: "2024-04-01-preview"
+# 使用 openai provider + Azure OpenAI v1 兼容端点
+embedding_provider: "openai"
+# 以下值通过环境变量覆盖 (MEMOBASE_EMBEDDING_*)
+embedding_api_key: "placeholder_will_be_overridden"
+embedding_base_url: "placeholder_will_be_overridden"
 embedding_model: "text-embedding-3-large"
+embedding_dim: 3072
 
 # Auth Config
 auth_enabled: true
