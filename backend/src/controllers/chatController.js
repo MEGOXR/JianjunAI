@@ -411,6 +411,10 @@ exports.sendMessage = async (ws, prompt, images = []) => {
         smoother.push(searchBuffer);
         searchBuffer = '';
       } else {
+        // 调试日志：检测到可能的标记
+        if (searchBuffer.length < 100) {
+          console.log(`🔎 检测到 '[': buffer="${searchBuffer}"`);
+        }
         // 有 '['，可能是 tag
         // 先把 '[' 之前的内容安全输出
         if (openBracketIndex > 0) {
@@ -426,8 +430,9 @@ exports.sendMessage = async (ws, prompt, images = []) => {
         if (closeBracketIndex !== -1) {
           // ✅ 捕获到了完整 tag: [XXXX]
           const fullTag = searchBuffer.substring(0, closeBracketIndex + 1);
-          // 检查是不是 SEARCH 指令 (放宽条件：支持 [SEARCH] 和 [SEARCH: query])
-          if (fullTag.includes('SEARCH')) {
+          console.log(`🔍 检测到完整标记: "${fullTag}"`);
+          // 检查是不是 SEARCH 指令 (放宽条件：支持 [SEARCH] 和 [SEARCH: query]，忽略大小写)
+          if (fullTag.toUpperCase().includes('SEARCH')) {
             const query = fullTag.replace(/\[SEARCH:?/, '').replace(']', '').trim();
 
             console.log(`🕵️ 捕获到主动回忆指令: "${query}"`);
@@ -522,6 +527,12 @@ ${searchResultContext}
             } catch (err) {
               console.error('执行搜索流程失败:', err);
               smoother.resume(); // 出错也要恢复
+              // 搜索失败时，输出一个友好的提示继续对话
+              const fallbackMsg = '抱歉，我暂时想不起来了，不过没关系，你可以再提醒我一下~';
+              assistantResponse += fallbackMsg;
+              smoother.push(fallbackMsg);
+              isSearchTriggered = true; // 标记已处理，防止残留内容被输出
+              break; // 必须退出循环
             }
           } else {
             // 是 [XXX] 但不是 SEARCH，当作普通文本输出
