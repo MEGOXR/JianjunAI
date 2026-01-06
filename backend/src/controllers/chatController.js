@@ -490,19 +490,62 @@ ${searchResultContext}
 
               smoother.resume();
 
+              let overlapBuffer = '';
+              let isCheckingOverlap = true;
+
               for await (const chunk2 of secondStream) {
                 const content2 = chunk2.choices?.[0]?.delta?.content;
                 if (content2) {
-                  assistantResponse += content2;
                   tokenCount++;
-                  const cleaned2 = content2
+
+                  // 定义清理函数，确保一致性
+                  const cleanText = (text) => text
                     .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')
                     .replace(/\*\*([^*]+)\*\*/g, '「$1」')
                     .replace(/\*([^*]+)\*/g, '$1')
                     .replace(/#{1,6}\s*/g, '')
                     .replace(/^\s*[-*+]\s+/gm, '• ')
                     .replace(/`([^`]+)`/g, '「$1」');
-                  smoother.push(cleaned2);
+
+                  if (isCheckingOverlap) {
+                    overlapBuffer += content2;
+
+                    // 检查是否完全包含在 alreadySpoken 中（或 alreadySpoken 包含 buffer）
+                    // 情况1: buffer 长度超过了 alreadySpoken，检查前缀是否匹配
+                    if (overlapBuffer.length > alreadySpoken.length) {
+                      if (overlapBuffer.startsWith(alreadySpoken)) {
+                        // 发现重复部分，去除它，保留剩余的新内容
+                        const newContent = overlapBuffer.substring(alreadySpoken.length);
+                        if (newContent) {
+                          assistantResponse += newContent;
+                          smoother.push(cleanText(newContent));
+                        }
+                        // 重复部分已被处理，停止检查
+                        isCheckingOverlap = false;
+                      } else {
+                        // 内容不匹配，说明没有重复（或者 LLM 改口了），全部输出
+                        assistantResponse += overlapBuffer;
+                        smoother.push(cleanText(overlapBuffer));
+                        isCheckingOverlap = false;
+                      }
+                    }
+                    // 情况2: buffer 长度还不够，检查是否是 alreadySpoken 的前缀
+                    else {
+                      if (alreadySpoken.startsWith(overlapBuffer)) {
+                        // 目前为止都匹配，继续缓冲，不输出
+                        // 注意：这里不添加到 assistantResponse，避免重复记录
+                      } else {
+                        // 发现不匹配，立即全部输出
+                        assistantResponse += overlapBuffer;
+                        smoother.push(cleanText(overlapBuffer));
+                        isCheckingOverlap = false;
+                      }
+                    }
+                  } else {
+                    // 非检查模式，直接输出
+                    assistantResponse += content2;
+                    smoother.push(cleanText(content2));
+                  }
                 }
               }
 
