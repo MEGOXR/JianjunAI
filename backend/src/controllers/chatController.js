@@ -334,27 +334,18 @@ exports.sendMessage = async (ws, prompt, images = []) => {
       maxDelay: 40
     });
 
-    // 🕵️ 意图识别 (V2) - LLM 主导
-    // 不再使用简单的关键词匹配，而是由 Prompt 引导 LLM 输出 [SEARCH: xxx]
-    // 我们需要在流式输出过程中拦截这个标记
+    // 辅助函数：定义如何清洗文本（去除 Markdown 干扰）
+    const cleanText = (text) => text
+      .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')
+      .replace(/\*\*([^*]+)\*\*/g, '「$1」')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/#{1,6}\s*/g, '')
+      .replace(/^\s*[-*+]\s+/gm, '• ')
+      .replace(/`([^`]+)`/g, '「$1」');
 
-    let assistantResponse = '';
-
-    // 构建用于本次请求的消息列表
-    let messagesForLlm = [
-      { role: 'system', content: promptService.getSystemPrompt() },
-      ...history.filter(m => m.role !== 'system')
-    ];
-
-    // 流处理控制变量
-    let stream;
-    let isSearchTriggered = false;
-    let searchBuffer = ''; // 用于检测 [SEARCH: ...] 的临时缓冲
-
-    // 定义一个通用的流处理函数，方便在搜索后重新调用
-    const processStream = async (inputMessages) => {
+    // 辅助函数：创建 LLM 流
+    const createStream = async (inputMessages) => {
       let currentStream;
-
       if (useProvider) {
         const llmProvider = ProviderFactory.getLLMProvider();
         await llmProvider.initialize();
@@ -370,205 +361,209 @@ exports.sendMessage = async (ws, prompt, images = []) => {
           stop: null
         });
       }
-
       return currentStream;
     };
 
-    // 第一次调用 LLM
-    timer.mark('开始第一次调用LLM');
-    stream = await processStream(messagesForLlm);
+    // 🕵️ 意图识别 & 主动回忆 (递归版)
+    // 允许 LLM 在一次回复中多次触发搜索 (目前限制为 3 次以防死循环)
 
-    // 处理流
+    let assistantResponse = '';
+    let searchBuffer = ''; // 用于检测 [SEARCH: ...] 的临时缓冲
+    let currentInputMessages = [
+      { role: 'system', content: promptService.getSystemPrompt() },
+      ...history.filter(m => m.role !== 'system')
+    ];
+
+    let searchAttemptCount = 0;
+    const MAX_SEARCH_ATTEMPTS = 3;
     let firstTokenReceived = false;
     let tokenCount = 0;
+    let isSearchTriggered = false; // 用于后续判断
 
-    for await (const chunk of stream) {
-      const content = chunk.choices?.[0]?.delta?.content;
-      if (content === undefined || content === null) continue;
-
-      if (!firstTokenReceived) {
-        firstTokenReceived = true;
-        timer.mark('🎯 首个Token接收 (TTFT)');
+    // ♻️ 主循环：处理流和搜索
+    while (searchAttemptCount < MAX_SEARCH_ATTEMPTS) {
+      // 记录日志
+      if (searchAttemptCount === 0) {
+        timer.mark('开始第一次调用LLM');
+      } else {
+        console.log(`[${requestId}] 🔄 开始第 ${searchAttemptCount + 1} 轮 LLM 调用 (搜索深度: ${searchAttemptCount})`);
+        timer.mark(`开始第${searchAttemptCount + 1}次调用LLM`);
+        // 确保平滑器恢复 (因为搜索时暂停了)
+        smoother.resume();
       }
 
-      tokenCount++;
-      assistantResponse += content;
-
-      // 🕵️ 实时检测 [SEARCH: ...] 标记 - 健壮版
-      // 将新内容拼接到缓冲
-      searchBuffer += content;
-
-      // 状态机逻辑：
-      // 1. 如果缓冲中没有 '['，说明肯定没有 tag，直接 output 并清空缓冲
-      // 2. 如果有 '['，则保留缓冲，等待更多内容，直到：
-      //    a. 找到了 ']' -> 解析 tag
-      //    b. 缓冲太长 (>50) -> 肯定不是 tag，output 并清空
-
-      const openBracketIndex = searchBuffer.indexOf('[');
-
-      if (openBracketIndex === -1) {
-        // 没有 '['，安全输出
-        // 额外检查：确保不会意外输出 SEARCH 标记
-        if (searchBuffer.toUpperCase().includes('SEARCH')) {
-          console.warn(`⚠️ 警告：尝试输出包含SEARCH的内容: "${searchBuffer}"`);
+      // 1. 创建流
+      let stream;
+      try {
+        stream = await createStream(currentInputMessages);
+      } catch (err) {
+        console.error(`[${requestId}] 创建LLM流失败:`, err);
+        // 如果是在递归步骤中失败，最好不要让整个请求挂掉，而是结束当前循环
+        if (searchAttemptCount > 0) {
+          smoother.push('\n(连接不稳定，请稍后再试)');
+          break;
         }
-        smoother.push(searchBuffer);
-        searchBuffer = '';
-      } else {
-        // 调试日志：检测到可能的标记
-        if (searchBuffer.length < 100) {
-          console.log(`🔎 检测到 '[': buffer="${searchBuffer}"`);
-        }
-        // 有 '['，可能是 tag
-        // 先把 '[' 之前的内容安全输出
-        if (openBracketIndex > 0) {
-          const safePrefix = searchBuffer.substring(0, openBracketIndex);
-          smoother.push(safePrefix);
-          searchBuffer = searchBuffer.substring(openBracketIndex);
+        throw err; // 第一轮就失败则抛出
+      }
+
+      // 2. 处理流
+      let foundSearchTagInThisLoop = false;
+
+      // 每次新流开始，searchBuffer 应该是空的，因为上下文已经更新，LLM 是接着说的
+      // 但要注意：如果上一轮 searchBuffer 里残留了半个 tag (理论上不应该，因为我们只会 break on full tag)，
+      // 这里的逻辑是每次全新的生成。
+      searchBuffer = '';
+
+      for await (const chunk of stream) {
+        const content = chunk.choices?.[0]?.delta?.content;
+        if (content === undefined || content === null) continue;
+
+        if (!firstTokenReceived) {
+          firstTokenReceived = true;
+          timer.mark('🎯 首个Token接收 (TTFT)');
         }
 
-        // 现在 searchBuffer 以 '[' 开头
-        // 检查是否有闭合的 ']'
-        const closeBracketIndex = searchBuffer.indexOf(']');
+        tokenCount++;
+        assistantResponse += content;
 
-        if (closeBracketIndex !== -1) {
-          // ✅ 捕获到了完整 tag: [XXXX]
-          const fullTag = searchBuffer.substring(0, closeBracketIndex + 1);
-          console.log(`🔍 检测到完整标记: "${fullTag}"`);
-          // 检查是不是 SEARCH 指令 (放宽条件：支持 [SEARCH] 和 [SEARCH: query]，忽略大小写)
-          if (fullTag.toUpperCase().includes('SEARCH')) {
-            const query = fullTag.replace(/\[SEARCH:?/, '').replace(']', '').trim();
+        // 🕵️ 实时检测 [SEARCH: ...] 标记
+        searchBuffer += content;
 
-            console.log(`🕵️ 捕获到主动回忆指令: "${query}"`);
-            timer.mark('捕获到搜索指令', { query });
+        const openBracketIndex = searchBuffer.indexOf('[');
 
-            // 暂停平滑器
-            smoother.pause();
+        if (openBracketIndex === -1) {
+          // 没有 '['，安全输出
+          // 额外检查：确保不会意外输出 SEARCH 标记
+          if (searchBuffer.toUpperCase().includes('SEARCH')) {
+            console.warn(`⚠️ 警告：尝试输出包含SEARCH的内容: "${searchBuffer}"`);
+          }
+          smoother.push(cleanText(searchBuffer));
+          searchBuffer = '';
+        } else {
+          // 有 '['，可能是 tag
+          // 先把 '[' 之前的内容安全输出
+          if (openBracketIndex > 0) {
+            const safePrefix = searchBuffer.substring(0, openBracketIndex);
+            smoother.push(cleanText(safePrefix));
+            searchBuffer = searchBuffer.substring(openBracketIndex);
+          }
 
-            // 从 assistantResponse 中移除该指令
-            assistantResponse = assistantResponse.replace(fullTag, '');
+          // 现在 searchBuffer 以 '[' 开头
+          // 检查是否有闭合的 ']'
+          const closeBracketIndex = searchBuffer.indexOf(']');
 
-            // 清空 buffer (因为已经处理了这个 tag)
-            // 注意：如果有剩余内容 (比如 [SEARCH]后还有字)，要留着
-            const remaining = searchBuffer.substring(closeBracketIndex + 1);
-            searchBuffer = remaining;
+          if (closeBracketIndex !== -1) {
+            // ✅ 捕获到了完整 tag: [XXXX]
+            const fullTag = searchBuffer.substring(0, closeBracketIndex + 1);
 
-            // --- 执行异步搜索 ---
-            try {
-              let searchResults = [];
+            // 检查是不是 SEARCH 指令
+            if (fullTag.toUpperCase().includes('SEARCH')) {
+              const query = fullTag.replace(/\[SEARCH:?/, '').replace(']', '').trim();
+              console.log(`🕵️ 捕获到主动回忆指令: "${query}"`);
+              timer.mark('捕获到搜索指令', { query, depth: searchAttemptCount });
+
+              // ⏸️ 暂停平滑器 (防止用户看到这部分停顿)
+              smoother.pause();
+
+              // 从 assistantResponse 中移除该指令
+              // 注意：此时 fullTag 刚被加入 assistantResponse 末尾
+              // 安全起见使用 replace，但要小心不要替换掉前面可能出现过的类似文本
+              // 由于是在流中，我们假设它是最新的
+              // TODO: 更精确的做法是 assistantResponse.slice(0, -fullTag.length) ?
+              // 考虑到 chunk 边界，replace 比较稳妥，只要 prompt 不会让 LLM 重复输出 tag
+              assistantResponse = assistantResponse.replace(fullTag, '');
+
+              // 清理 searchBuffer
+              searchBuffer = searchBuffer.substring(closeBracketIndex + 1);
+
+              // --- 执行异步搜索 ---
               try {
-                searchResults = await memoryService.searchEvents(userId, query || prompt, 3); // 如果 query 为空用 prompt 兜底
-              } catch (memobaseError) {
-                console.error('Memobase 搜索失败 (可能是配额超限):', memobaseError.message);
-                // 失败时不中断流程，视为无结果
-                searchResults = [];
-              }
+                let searchResults = [];
+                const searchQuery = query || prompt; // 兜底
+                try {
+                  searchResults = await memoryService.searchEvents(userId, searchQuery, 3);
+                } catch (memobaseError) {
+                  console.error('Memobase 搜索失败:', memobaseError.message);
+                  searchResults = [];
+                }
 
-              let searchResultContext = '';
-              if (searchResults && searchResults.length > 0) {
-                console.log(`🔍 搜索完成，找到 ${searchResults.length} 条记录`);
-                searchResultContext = searchResults.map(e => {
-                  const time = e.timestamp ? new Date(e.timestamp).toLocaleDateString() : '未知时间';
-                  return `- ${time}: ${e.content || e}`;
-                }).join('\n');
-              } else {
-                console.log('🔍 搜索完成，无记录');
-                searchResultContext = '未找到相关历史记录。';
-              }
+                let searchResultContext = '';
+                if (searchResults && searchResults.length > 0) {
+                  console.log(`🔍 搜索完成，找到 ${searchResults.length} 条记录`);
+                  searchResultContext = searchResults.map(e => {
+                    const time = e.timestamp ? new Date(e.timestamp).toLocaleDateString() : '未知时间';
+                    return `- ${time}: ${e.content || e}`;
+                  }).join('\n');
+                } else {
+                  console.log('🔍 搜索完成，无记录');
+                  searchResultContext = '未找到相关历史记录。';
+                }
 
-              // 构建后续 Prompt
-              const alreadySpoken = assistantResponse.trim();
-              console.log(`📝 已说内容 (${alreadySpoken.length}字): "${alreadySpoken.substring(0, 50)}..."`);
-              const followUpSystemPrompt = `${promptService.getSystemPrompt()}
+                // 构建后续 Prompt
+                const alreadySpoken = assistantResponse.trim();
 
-【重要插播】
-系统刚帮你搜索到了以下信息：
+                const followUpSystemPrompt = `${promptService.getSystemPrompt()}
+
+【重要插播 - 内部思维链】
+系统根据你的请求 (${searchQuery}) 搜索到了以下信息：
 ${searchResultContext}
 
-请基于以上搜索结果，接着你刚才的话继续把话说完。确保语音连贯，就像一个人中间停顿了一下思考后接着说一样。`;
+请基于以上搜索结果，接着你刚才的话 ("${alreadySpoken.substring(Math.max(0, alreadySpoken.length - 20))}") 继续把话说完。
+不要重复你已经说过的话。请确保持续生成的语音连贯。
+如果搜索结果没有帮助，就自然地说明情况或请求用户提供更多细节。`;
 
-              // 使用 assistant prefill：将已说内容作为 assistant 消息预填充
-              // 这样 LLM 会认为它已经输出了这部分内容，直接接着继续生成，不会重复
-              messagesForLlm = [
-                { role: 'system', content: followUpSystemPrompt },
-                ...history.filter(m => m.role !== 'system'),
-                { role: 'assistant', content: alreadySpoken }
-              ];
+                // 更新 Messages，准备下一轮递归
+                currentInputMessages = [
+                  { role: 'system', content: followUpSystemPrompt },
+                  ...history.filter(m => m.role !== 'system'),
+                  { role: 'assistant', content: alreadySpoken }
+                ];
 
-              // 第二次调用 LLM
-              console.log('🚀 准备第二次调用LLM...');
-              timer.mark('开始第二次调用LLM (带记忆)');
-              const secondStream = await processStream(messagesForLlm);
-              console.log('✅ 第二次LLM流已创建');
+                foundSearchTagInThisLoop = true;
+                isSearchTriggered = true;
+                searchAttemptCount++;
+                break; // 🚨 跳出 for await (stream)，进入下一次 createStream
 
-              smoother.resume();
-              console.log('▶️ smoother已恢复');
-
-              // 定义清理函数，确保一致性
-              const cleanText = (text) => text
-                .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')
-                .replace(/\*\*([^*]+)\*\*/g, '「$1」')
-                .replace(/\*([^*]+)\*/g, '$1')
-                .replace(/#{1,6}\s*/g, '')
-                .replace(/^\s*[-*+]\s+/gm, '• ')
-                .replace(/`([^`]+)`/g, '「$1」');
-
-              // 由于使用了 assistant prefill，LLM 会直接接着已说内容继续生成
-              // 不需要复杂的去重逻辑，直接输出即可
-              let secondLlmOutput = '';
-              for await (const chunk2 of secondStream) {
-                const content2 = chunk2.choices?.[0]?.delta?.content;
-                if (content2) {
-                  tokenCount++;
-                  secondLlmOutput += content2;
-                  assistantResponse += content2;
-                  smoother.push(cleanText(content2));
-                }
+              } catch (searchErr) {
+                console.error('❌ 搜索流程异常:', searchErr);
+                // 恢复并继续
+                smoother.resume();
+                // 既然处理失败，就不要设 foundSearchTagInThisLoop 了，让它继续输出或者结束
+                // 但 buffer 里的 tag 已经被消耗了。
+                // 简单起见，终止递归，fallback
+                searchAttemptCount = MAX_SEARCH_ATTEMPTS;
+                break;
               }
-              console.log(`📤 第二次LLM输出 (${secondLlmOutput.length}字): "${secondLlmOutput}"`);
 
-              isSearchTriggered = true;
-              // 处理剩余的 searchBuffer (一般是空的，除非 tag 后紧跟文字)
-              if (searchBuffer) {
-                smoother.push(searchBuffer);
-                searchBuffer = '';
-              }
-              break; // 退出外层流循环
-
-            } catch (err) {
-              console.error('❌ 执行搜索流程失败:', err);
-              console.error('❌ 错误详情:', err.stack || err.message);
-              smoother.resume(); // 出错也要恢复
-              // 搜索失败时，输出一个友好的提示继续对话
-              const fallbackMsg = '抱歉，我暂时想不起来了，不过没关系，你可以再提醒我一下~';
-              assistantResponse += fallbackMsg;
-              smoother.push(fallbackMsg);
-              isSearchTriggered = true; // 标记已处理，防止残留内容被输出
-              break; // 必须退出循环
+            } else {
+              // 是 [XXX] 但不是 SEARCH，当作普通文本输出
+              smoother.push(cleanText(fullTag));
+              searchBuffer = searchBuffer.substring(closeBracketIndex + 1);
             }
           } else {
-            // 是 [XXX] 但不是 SEARCH，当作普通文本输出
-            smoother.push(fullTag);
-            searchBuffer = searchBuffer.substring(closeBracketIndex + 1);
-          }
-        } else {
-          // 有 '[' 但没有 ']'，继续缓冲
-          // 安全检查：如果缓冲太长，说明可能不是 tag，强制输出以防卡死
-          if (searchBuffer.length > 50) {
-            smoother.push(searchBuffer);
-            searchBuffer = '';
+            // 有 '[' 但没有 ']'，继续缓冲
+            // 安全检查：如果缓冲太长，说明可能不是 tag，强制输出以防卡死
+            if (searchBuffer.length > 50) {
+              smoother.push(cleanText(searchBuffer));
+              searchBuffer = '';
+            }
           }
         }
+      } // end for await loop
+
+      // stream 结束了
+      if (!foundSearchTagInThisLoop) {
+        // 如果流自然结束且没有 triggers，说明已经说完了
+        break; // 退出 while loop
       }
+
+      // 如果 foundSearchTagInThisLoop 为 true，while 循环会继续，使用新的 messages 再次请求 LLM
     }
 
-    // 循环结束后，如果缓冲区还有剩（比如被打断的 [SEARCH），全部吐出来
-    if (!isSearchTriggered && searchBuffer) {
-      smoother.push(searchBuffer);
+    // 循环结束后，处理剩余的 searchBuffer
+    if (searchBuffer) {
+      smoother.push(cleanText(searchBuffer));
     }
-
-    // 如果没有触发搜索，确保 searchBuffer 里可能残留的内容（例如 [ 没闭合的情况）被吐出来
-    // 但一般 LLM 不会只输出一半 tag。
 
     // 💡 确保所有内容都输出 (等待平滑器跑完)
     await smoother.flush();
