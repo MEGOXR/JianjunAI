@@ -18,8 +18,8 @@ embedding_provider: "openai"
 # 以下值通过环境变量覆盖 (MEMOBASE_EMBEDDING_*)
 embedding_api_key: "placeholder_will_be_overridden"
 embedding_base_url: "placeholder_will_be_overridden"
-embedding_model: "text-embedding-3-small"
-embedding_dim: 1536
+embedding_model: "text-embedding-3-large"
+embedding_dim: 3072
 
 # Auth Config
 auth_enabled: true
