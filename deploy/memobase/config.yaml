@@ -9,7 +9,7 @@ log_level: "info"
 llm_style: "openai"
 llm_api_key: "placeholder_will_be_overridden"
 llm_base_url: "placeholder_will_be_overridden"
-best_llm_model: "gpt-4o-mini"
+best_llm_model: "gpt-5.2-chat"
 
 # Embedding Config
 # 使用 openai provider + Azure OpenAI v1 兼容端点
