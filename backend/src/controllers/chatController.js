@@ -511,14 +511,17 @@ ${searchResultContext}
 
               // 由于使用了 assistant prefill，LLM 会直接接着已说内容继续生成
               // 不需要复杂的去重逻辑，直接输出即可
+              let secondLlmOutput = '';
               for await (const chunk2 of secondStream) {
                 const content2 = chunk2.choices?.[0]?.delta?.content;
                 if (content2) {
                   tokenCount++;
+                  secondLlmOutput += content2;
                   assistantResponse += content2;
                   smoother.push(cleanText(content2));
                 }
               }
+              console.log(`📤 第二次LLM输出 (${secondLlmOutput.length}字): "${secondLlmOutput}"`);
 
               isSearchTriggered = true;
               // 处理剩余的 searchBuffer (一般是空的，除非 tag 后紧跟文字)
