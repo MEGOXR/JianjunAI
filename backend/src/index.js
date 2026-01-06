@@ -1,8 +1,15 @@
+require('dotenv').config();
 const appInsights = require('applicationinsights');
 
 // 初始化 Azure Application Insights (如果配置了连接字符串)
 if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
   try {
+    const connStr = process.env.APPLICATIONINSIGHTS_CONNECTION_STRING;
+    console.log('🔍 Application Insights 配置:');
+    console.log(`- Connection String 长度: ${connStr.length}`);
+    // 打印前50个字符以便检查格式 (InstrumentationKey等敏感信息会被部分显示，但在控制台日志中是可以接受的debug手段)
+    console.log(`- Connection String (Prefix): ${connStr.substring(0, 50)}...`);
+
     appInsights.setup()
       .setAutoCollectConsole(true, true) // 启用控制台日志收集
       .setAutoCollectExceptions(true)    // 启用异常收集
@@ -15,7 +22,6 @@ if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
   console.log('ℹ️ 未检测到 APPLICATIONINSIGHTS_CONNECTION_STRING，跳过 Application Insights 初始化');
 }
 
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { WebSocketServer } = require('ws'); // 引入 WebSocket 模块
