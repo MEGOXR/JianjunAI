@@ -260,6 +260,22 @@ app.get('/ws-test', (req, res) => {
   });
 });
 
+// Filter out health check and bot noise from error logs
+app.use((req, res, next) => {
+  const ignoredPaths = ['/robots933456.txt', '/robots.txt', '/favicon.ico'];
+  // Check dynamically for the specific Azure random robots file pattern
+  if (ignoredPaths.includes(req.path) || req.path.match(/^\/robots\d+\.txt$/)) {
+    return res.status(404).send('Not Found');
+  }
+
+  const userAgent = req.get('User-Agent') || '';
+  if (userAgent.includes('HealthCheck')) {
+    return res.status(404).send('Not Found');
+  }
+
+  next();
+});
+
 // Error handling middleware (must be last before server creation)
 app.use(ErrorHandler.notFoundHandler);
 app.use(ErrorHandler.expressErrorHandler);
