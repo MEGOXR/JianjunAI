@@ -42,6 +42,11 @@ class MemobaseService {
       this.BlobType = BlobType;
       this.isEnabled = true;
 
+      console.log(`[Memobase] 客户端已创建`);
+      console.log(`[Memobase] Project URL: ${projectUrl}`);
+      // 不要打印完整的 API Key
+      console.log(`[Memobase] API Key: ${apiKey ? apiKey.substring(0, 8) + '...' : 'undefined'}`);
+
       // 启动定期刷新
       this._startPeriodicFlush();
 

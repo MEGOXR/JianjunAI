@@ -244,6 +244,24 @@ class MemoryService {
   }
 
   /**
+   * 搜索记忆事件 (Active Recall)
+   * @param {string} wechatOpenId - 微信OpenID
+   * @param {string} query - 搜索关键词
+   * @param {number} limit - 最大返回数量
+   * @returns {Array} 相关的记忆事件列表
+   */
+  async searchEvents(wechatOpenId, query, limit = 5) {
+    if (this.useMemobase && memobaseService.isAvailable()) {
+      try {
+        return await memobaseService.searchEvents(wechatOpenId, query, limit);
+      } catch (error) {
+        console.error('[MemoryService] 搜索记忆失败:', error);
+      }
+    }
+    return [];
+  }
+
+  /**
    * 获取用户画像（用于问候语等）
    * @param {string} wechatOpenId - 微信OpenID
    * @returns {object|null} 用户画像
