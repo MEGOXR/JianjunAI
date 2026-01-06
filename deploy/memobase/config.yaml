@@ -5,12 +5,11 @@ server_port: 8019
 log_level: "info"
 
 # LLM Config
-# API key 和 endpoint 通过环境变量 MEMOBASE_LLM_API_KEY 和 MEMOBASE_LLM_BASE_URL 覆盖
-llm_provider: "azure_openai"
+# 使用 openai provider + Azure OpenAI v1 兼容端点 (与 embedding 相同)
+llm_style: "openai"
 llm_api_key: "placeholder_will_be_overridden"
 llm_base_url: "placeholder_will_be_overridden"
-llm_api_version: "2025-04-01-preview"
-llm_model: "gpt-5.2-chat"
+best_llm_model: "gpt-4o-mini"
 
 # Embedding Config
 # 使用 openai provider + Azure OpenAI v1 兼容端点

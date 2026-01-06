@@ -53,7 +53,9 @@
       "Bash(del backendtest-memobase-flow.js)",
       "Bash(timeout /t 3)",
       "Bash(ipconfig:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "mcp__context7__query-docs",
+      "mcp__azure-readonly__documentation"
     ],
     "deny": []
   }
