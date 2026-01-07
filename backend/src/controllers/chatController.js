@@ -599,18 +599,39 @@ exports.sendMessage = async (ws, prompt, images = []) => {
                 // 🔍 打印第一轮LLM生成的内容，用于调试
                 console.log(`[${requestId}] 📝 第一轮LLM已生成内容: "${alreadySpoken}"`);
 
-                // 🔍 检测alreadySpoken中是否包含负面判断，如果有则清空
+                // 🔍 检测是否需要清空第一轮内容
+                let shouldClear = false;
+                let clearReason = '';
+
+                // 策略1: 检测负面判断词
                 const negativePatterns = ['没找到', '没有找到', '查不到', '没有记录', '找不到', '无法找到', '没有相关'];
                 const hasNegativeJudgment = negativePatterns.some(pattern => alreadySpoken.includes(pattern));
 
                 if (hasNegativeJudgment) {
-                  console.log(`[${requestId}] ⚠️ 检测到alreadySpoken包含负面判断，将清空以避免误导`);
-                  // 清空已说内容，让LLM基于搜索结果重新组织回答
+                  shouldClear = true;
+                  clearReason = '包含负面判断';
+                }
+
+                // 策略2: 当搜索成功找到记录时，如果第一轮是"过渡话"，则清空
+                // 这样可以避免"我来确认一下"这类话影响第二轮的判断
+                const hasSearchResults = searchResults && searchResults.length > 0;
+                const isTransitionalPhrase = alreadySpoken.includes('查') ||
+                                             alreadySpoken.includes('确认') ||
+                                             alreadySpoken.includes('稍等') ||
+                                             alreadySpoken.includes('片刻');
+
+                if (hasSearchResults && isTransitionalPhrase) {
+                  shouldClear = true;
+                  clearReason = '搜索成功且第一轮为过渡话';
+                }
+
+                if (shouldClear) {
+                  console.log(`[${requestId}] ⚠️ 将清空第一轮内容 (原因: ${clearReason})`);
                   assistantResponse = '';
                 }
 
                 const finalAlreadySpoken = assistantResponse.trim();
-                console.log(`[${requestId}] 📝 最终传给第二轮的内容: "${finalAlreadySpoken}" (已清空: ${hasNegativeJudgment})`);
+                console.log(`[${requestId}] 📝 最终传给第二轮的内容: "${finalAlreadySpoken}" (已清空: ${shouldClear}, 原因: ${clearReason || '无'})`);
 
                 const followUpSystemPrompt = `${promptService.getSystemPrompt()}
 
