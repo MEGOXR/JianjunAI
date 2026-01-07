@@ -602,10 +602,12 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 系统根据你的请求 (${safeSearchQuery}) 搜索到了以下信息：
 ${searchResultContext}
 
-请基于以上搜索结果，接着你刚才的话 ("${alreadySpoken.substring(Math.max(0, alreadySpoken.length - 20))}") 继续把话说完。
-不要重复你已经说过的话。请确保持续生成的语音连贯。
-如果搜索结果没有帮助，就自然地说明情况或请求用户提供更多细节。
-🛑 严禁对相同的关键词再次发起 [SEARCH]！如果没找到，就老实说没找到。`;
+**重要说明**：
+1. 如果上面显示"未找到相关历史记录"，说明真的没有记录，请如实告诉用户没找到。
+2. 如果上面显示了具体的对话内容（即使只是简单的问候如"你好"、"在吗"），这些就是**真实的历史对话**，请准确地告诉用户当时聊了什么。不要因为内容简单就说"没有相关记录"。
+3. 请基于以上搜索结果，接着你刚才的话 ("${alreadySpoken.substring(Math.max(0, alreadySpoken.length - 20))}") 继续把话说完。
+4. 不要重复你已经说过的话。请确保持续生成的语音连贯。
+🛑 严禁对相同的关键词再次发起 [SEARCH]！`;
 
                 // 更新 Messages，准备下一轮递归
                 currentInputMessages = [
