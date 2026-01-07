@@ -348,13 +348,8 @@ exports.sendMessage = async (ws, prompt, images = []) => {
     });
 
     // 辅助函数：定义如何清洗文本（去除 Markdown 干扰）
-    const cleanText = (text) => text
-      .replace(/\*\*\*([^*]+)\*\*\*/g, '「$1」')
-      .replace(/\*\*([^*]+)\*\*/g, '「$1」')
-      .replace(/\*([^*]+)\*/g, '$1')
-      .replace(/#{1,6}\s*/g, '')
-      .replace(/^\s*[-*+]\s+/gm, '• ')
-      .replace(/`([^`]+)`/g, '「$1」');
+    // 辅助函数：定义如何清洗文本（不再去除 Markdown，前端已支持）
+    const cleanText = (text) => text;
 
     // 辅助函数：创建 LLM 流
     const createStream = async (inputMessages) => {
