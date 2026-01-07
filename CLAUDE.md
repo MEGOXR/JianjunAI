@@ -78,7 +78,7 @@ JWT_SECRET=<your-jwt-secret>
 
 ### AI Context Management
 - System prompt defines AI persona as "杨院长" (Director Yang)
-- Conversation history limited to 10 messages to manage token usage
+- Conversation history limited to 31 messages (~15 rounds) to ensure complete consultation context
 - Each user session maintains independent conversation context
 - Persistent chat history stored in `backend/data/users.json`
 - Intelligent greeting system based on user history and time since last visit

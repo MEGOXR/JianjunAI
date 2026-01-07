@@ -64,7 +64,7 @@ const chatHistories = new Map();
 const MAX_HISTORY_SIZE = 100;
 const CLEANUP_INTERVAL = 15 * 60 * 1000;
 const MAX_IDLE_TIME = 2 * 60 * 60 * 1000;
-const MAX_MESSAGES_PER_USER = 8;
+const MAX_MESSAGES_PER_USER = 31;
 
 // 清理功能
 function cleanupChatHistories() {
@@ -715,9 +715,9 @@ ${searchResultContext}
     }
 
     // 12. 限制历史长度
-    if (history.length > 10) {
+    if (history.length > 31) {
       const systemMessage = history.find(msg => msg.role === 'system');
-      const recentHistory = history.slice(-9);
+      const recentHistory = history.slice(-30);
       history = systemMessage ? [systemMessage, ...recentHistory] : recentHistory;
 
       historyData.messages = history;
