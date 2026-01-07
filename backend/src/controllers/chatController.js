@@ -596,17 +596,21 @@ exports.sendMessage = async (ws, prompt, images = []) => {
                 const alreadySpoken = assistantResponse.trim();
                 const safeSearchQuery = typeof queryOrParams === 'object' ? JSON.stringify(queryOrParams) : queryOrParams;
 
+                // 🔍 打印第一轮LLM生成的内容，用于调试
+                console.log(`[${requestId}] 📝 第一轮LLM已生成内容: "${alreadySpoken}"`);
+
                 // 🔍 检测alreadySpoken中是否包含负面判断，如果有则清空
                 const negativePatterns = ['没找到', '没有找到', '查不到', '没有记录', '找不到', '无法找到', '没有相关'];
                 const hasNegativeJudgment = negativePatterns.some(pattern => alreadySpoken.includes(pattern));
 
                 if (hasNegativeJudgment) {
-                  console.log(`[${requestId}] ⚠️ 检测到alreadySpoken包含负面判断，将清空以避免误导: "${alreadySpoken}"`);
+                  console.log(`[${requestId}] ⚠️ 检测到alreadySpoken包含负面判断，将清空以避免误导`);
                   // 清空已说内容，让LLM基于搜索结果重新组织回答
                   assistantResponse = '';
                 }
 
                 const finalAlreadySpoken = assistantResponse.trim();
+                console.log(`[${requestId}] 📝 最终传给第二轮的内容: "${finalAlreadySpoken}" (已清空: ${hasNegativeJudgment})`);
 
                 const followUpSystemPrompt = `${promptService.getSystemPrompt()}
 
@@ -616,12 +620,28 @@ ${searchResultContext}
 
 **⚠️ 关键指示**：
 1. **忽略之前的任何判断**：如果你刚才说了"没找到"或"查不到"，请忽略那些话。现在要基于上面的搜索结果重新回答。
-2. **准确理解搜索结果**：
+
+2. **准确理解搜索结果 - 这是重点！**：
    - 如果上面显示"未找到相关历史记录"，说明真的没有记录，请如实告诉用户。
-   - 如果上面显示了具体的对话内容（即使只是"你好"、"在吗"等简单问候），这些就是**真实存在的历史对话**，必须准确告诉用户当时聊了什么。
-   - 不要因为内容简单或看起来没意义就说"没有相关记录"。用户问"聊过什么"，即使只是简单问候，也要如实回答。
-3. **如何回答**：${finalAlreadySpoken ? `请接着你刚才的话 ("${finalAlreadySpoken.substring(Math.max(0, finalAlreadySpoken.length - 30))}") 继续说，但要基于搜索结果纠正或补充。` : '请基于搜索结果直接回答用户的问题。'}
-4. **语音连贯性**：保持自然的对话流，不要重复已经说过的话。
+   - 如果上面显示了具体的对话内容（**无论是什么内容**），这些都是**真实存在的历史对话**，必须如实告诉用户。
+
+3. **什么算是"有对话记录"？**
+   ✅ 以下情况都算是"有对话"，必须告诉用户"我们聊过"：
+   - 简单问候："你好"、"在吗"、"您好啊，晓通"
+   - 元对话："还记得我是谁吗"、"你还记得我吗"
+   - 任何用户发送的消息和你的回复
+
+   ❌ 只有以下情况才说"没有对话记录"：
+   - 搜索结果明确显示"未找到相关历史记录"
+
+4. **回答示例**：
+   - 如果搜索到"你好"、"还记得我是谁吗"这类对话 → "记得的！昨天你问我还记不记得你是谁，我告诉你当然记得你是晓通..."
+   - 如果真的没找到记录 → "抱歉，我查了一下，昨天好像没有找到相关的对话记录..."
+
+5. **如何回答**：${finalAlreadySpoken ? `请接着你刚才的话 ("${finalAlreadySpoken.substring(Math.max(0, finalAlreadySpoken.length - 30))}") 继续说，但要基于搜索结果纠正或补充。` : '请基于搜索结果直接回答用户的问题。'}
+
+6. **语音连贯性**：保持自然的对话流，不要重复已经说过的话。
+
 🛑 **严禁再次发起 [SEARCH]！** 所有信息已经在上面了。`;
 
                 // 更新 Messages，准备下一轮递归
