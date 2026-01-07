@@ -633,35 +633,44 @@ exports.sendMessage = async (ws, prompt, images = []) => {
                 const finalAlreadySpoken = assistantResponse.trim();
                 console.log(`[${requestId}] 📝 最终传给第二轮的内容: "${finalAlreadySpoken}" (已清空: ${shouldClear}, 原因: ${clearReason || '无'})`);
 
+                // 判断是否真的有搜索结果
+                const hasActualResults = !searchResultContext.includes('未找到相关历史记录');
+
                 const followUpSystemPrompt = `${promptService.getSystemPrompt()}
 
 【🔍 搜索结果插播】
-系统已根据你的请求 (${safeSearchQuery}) 搜索到以下信息：
+系统已搜索到以下信息：
 ${searchResultContext}
 
-**⚠️ 关键指示**：
-1. **忽略之前的任何判断**：如果你刚才说了"没找到"或"查不到"，请忽略那些话。现在要基于上面的搜索结果重新回答。
+**🚨 强制执行指令 - 必须严格遵守！**：
 
-2. **准确理解搜索结果 - 这是重点！**：
-   - 如果上面显示"未找到相关历史记录"，说明真的没有记录，请如实告诉用户。
-   - 如果上面显示了具体的对话内容（**无论是什么内容**），这些都是**真实存在的历史对话**，必须如实告诉用户。
+${hasActualResults ? `
+✅ **搜索状态：成功找到记录**
 
-3. **什么算是"有对话记录"？**
-   ✅ 以下情况都算是"有对话"，必须告诉用户"我们聊过"：
-   - 简单问候："你好"、"在吗"、"您好啊，晓通"
-   - 元对话："还记得我是谁吗"、"你还记得我吗"
-   - 任何用户发送的消息和你的回复
+1. **你必须这样回答**：
+   "记得的！昨天你跟我聊过，具体是：[然后逐条列出上面搜索到的对话内容]"
 
-   ❌ 只有以下情况才说"没有对话记录"：
-   - 搜索结果明确显示"未找到相关历史记录"
+2. **严格禁止**：
+   ❌ 不要说"没有相关记录"
+   ❌ 不要说"没有实质性对话"
+   ❌ 不要说"只是简单问候"
+   ❌ 不要判断对话是否"有意义"
 
-4. **回答示例**：
-   - 如果搜索到"你好"、"还记得我是谁吗"这类对话 → "记得的！昨天你问我还记不记得你是谁，我告诉你当然记得你是晓通..."
-   - 如果真的没找到记录 → "抱歉，我查了一下，昨天好像没有找到相关的对话记录..."
+3. **为什么？**
+   - 用户问"昨天聊了什么"，是想知道**所有对话**，不管是问候、闲聊还是咨询
+   - 上面列出的每一条都是**真实发生的对话**，必须如实告知
+   - "还记得我是谁吗"也是对话内容，必须说出来
 
-5. **如何回答**：${finalAlreadySpoken ? `请接着你刚才的话 ("${finalAlreadySpoken.substring(Math.max(0, finalAlreadySpoken.length - 30))}") 继续说，但要基于搜索结果纠正或补充。` : '请基于搜索结果直接回答用户的问题。'}
+4. **标准回答模板**：
+   "记得的！昨天咱们聊过。我看了一下记录，您当时[描述搜索到的对话内容]。"
+` : `
+❌ **搜索状态：未找到记录**
 
-6. **语音连贯性**：保持自然的对话流，不要重复已经说过的话。
+回答：
+"抱歉，我查了一下昨天的记录，好像没有找到相关的对话。可能您记错了日期，或者是更早之前聊过的？"
+`}
+
+5. **如何回答**：${finalAlreadySpoken ? `请接着你刚才的话继续说，但要基于上面的搜索结果纠正或补充。` : '请直接基于搜索结果回答。'}
 
 🛑 **严禁再次发起 [SEARCH]！** 所有信息已经在上面了。`;
 
@@ -672,6 +681,12 @@ ${searchResultContext}
                   // 如果已清空alreadySpoken，则不添加assistant消息，让LLM重新开始
                   ...(finalAlreadySpoken ? [{ role: 'assistant', content: finalAlreadySpoken }] : [])
                 ];
+
+                // 🔍 打印第二轮LLM收到的完整消息
+                console.log(`[${requestId}] 📋 第二轮LLM输入消息总数: ${currentInputMessages.length}`);
+                console.log(`[${requestId}] 📋 第二轮System Prompt (前500字符):\n${followUpSystemPrompt.substring(0, 500)}...`);
+                console.log(`[${requestId}] 📋 第二轮System Prompt包含搜索结果: ${followUpSystemPrompt.includes(searchResultContext)}`);
+                console.log(`[${requestId}] 📋 搜索结果内容长度: ${searchResultContext.length} 字符`);
 
                 foundSearchTagInThisLoop = true;
                 isSearchTriggered = true;
