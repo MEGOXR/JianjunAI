@@ -450,6 +450,8 @@ exports.sendMessage = async (ws, prompt, images = []) => {
     let isSearchTriggered = false; // 用于后续判断
 
     // ♻️ 主循环：处理流和搜索
+    const searchedQueries = new Set(); // 🛡️ 防止重复搜索的集合
+
     while (searchAttemptCount < MAX_SEARCH_ATTEMPTS) {
       // 记录日志
       if (searchAttemptCount === 0) {
@@ -559,11 +561,21 @@ exports.sendMessage = async (ws, prompt, images = []) => {
                 let searchResults = [];
                 // 如果参数是空的，兜底用 prompt
                 const finalParams = queryOrParams || prompt;
-                try {
-                  searchResults = await memoryService.searchEvents(userId, finalParams, 3);
-                } catch (memobaseError) {
-                  console.error('Memobase/Supabase 搜索失败:', memobaseError.message);
-                  searchResults = [];
+                const queryString = JSON.stringify(finalParams);
+
+                // 🛡️ 重复搜索检测
+                if (searchedQueries.has(queryString)) {
+                  console.warn(`🛑 拦截到重复搜索: ${queryString}, 跳过实际查询`);
+                  searchResults = []; // 既然重复，说明上次也没找到，或者找到了也已经包含了
+                  // 特殊标记，让 Context 反映这是重复操作
+                } else {
+                  searchedQueries.add(queryString);
+                  try {
+                    searchResults = await memoryService.searchEvents(userId, finalParams, 3);
+                  } catch (memobaseError) {
+                    console.error('Memobase/Supabase 搜索失败:', memobaseError.message);
+                    searchResults = [];
+                  }
                 }
 
                 let searchResultContext = '';
@@ -575,7 +587,7 @@ exports.sendMessage = async (ws, prompt, images = []) => {
                   }).join('\n');
                 } else {
                   console.log('🔍 搜索完成，无记录');
-                  searchResultContext = '未找到相关历史记录。';
+                  searchResultContext = '未找到相关历史记录。（注意：如果这是你刚刚搜索过的词，说明真的没有记录，请不要再次搜索相同的词，直接回答用户。）';
                 }
 
                 // 构建后续 Prompt
@@ -590,7 +602,8 @@ ${searchResultContext}
 
 请基于以上搜索结果，接着你刚才的话 ("${alreadySpoken.substring(Math.max(0, alreadySpoken.length - 20))}") 继续把话说完。
 不要重复你已经说过的话。请确保持续生成的语音连贯。
-如果搜索结果没有帮助，就自然地说明情况或请求用户提供更多细节。`;
+如果搜索结果没有帮助，就自然地说明情况或请求用户提供更多细节。
+🛑 严禁对相同的关键词再次发起 [SEARCH]！如果没找到，就老实说没找到。`;
 
                 // 更新 Messages，准备下一轮递归
                 currentInputMessages = [
