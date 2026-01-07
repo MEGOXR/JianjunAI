@@ -581,10 +581,12 @@ exports.sendMessage = async (ws, prompt, images = []) => {
                 let searchResultContext = '';
                 if (searchResults && searchResults.length > 0) {
                   console.log(`🔍 搜索完成，找到 ${searchResults.length} 条记录`);
+                  console.log(`🔍 搜索结果详情:`, JSON.stringify(searchResults, null, 2));
                   searchResultContext = searchResults.map(e => {
                     const time = e.timestamp ? new Date(e.timestamp).toLocaleDateString() : '未知时间';
                     return `- [${time}]: ${e.content || e}`;
                   }).join('\n');
+                  console.log(`🔍 格式化后的搜索上下文:\n${searchResultContext}`);
                 } else {
                   console.log('🔍 搜索完成，无记录');
                   searchResultContext = '未找到相关历史记录。（注意：如果这是你刚刚搜索过的词，说明真的没有记录，请不要再次搜索相同的词，直接回答用户。）';

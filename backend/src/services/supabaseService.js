@@ -380,7 +380,8 @@ class SupabaseService {
     let query = this.client
       .from('chat_messages')
       .select('role, content, created_at')
-      .eq('user_id', user.uuid);
+      .eq('user_id', user.uuid)
+      .neq('role', 'system'); // 排除系统消息
 
     // 关键词搜索
     if (options.query) {
@@ -418,11 +419,16 @@ class SupabaseService {
       return [];
     }
 
-    return data.map(msg => ({
-      role: msg.role,
-      content: msg.content,
-      timestamp: msg.created_at
-    }));
+    console.log(`[Supabase] 搜索到 ${data?.length || 0} 条消息 (已过滤系统消息)`);
+
+    // 过滤掉空内容和系统消息
+    return data
+      .filter(msg => msg.content && msg.content.trim().length > 0)
+      .map(msg => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.created_at
+      }));
   }
 
   /**
