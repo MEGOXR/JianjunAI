@@ -1,5 +1,6 @@
 version: '3.8'
 
+# Redeployment triggered to fix Docker runtime issues - 2026-01-07
 services:
   memobase:
     # 镜像来自您的 GitHub 仓库 (已自动配置为 megoxr/jianjunai)
