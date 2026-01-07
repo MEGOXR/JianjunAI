@@ -394,7 +394,13 @@ class SupabaseService {
       query = query.gte('created_at', options.startTime);
     }
     if (options.endTime) {
-      query = query.lte('created_at', options.endTime);
+      let endTime = options.endTime;
+      // 如果只有日期部分 (长度=10, 如 "2023-01-01")，则扩展到当天结束
+      // 这里的简单判断是看长度，如果需要更严谨可以用正则
+      if (typeof endTime === 'string' && endTime.length === 10) {
+        endTime = `${endTime}T23:59:59.999`;
+      }
+      query = query.lte('created_at', endTime);
     }
 
     // 排序与限制
