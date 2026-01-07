@@ -24,3 +24,55 @@ embedding_dim: 3072
 auth_enabled: true
 # 您的专属 API Key
 api_key: "mb_sk_73928174928374928374982374982374"
+
+# User Profile Config
+additional_user_profiles:
+  - topic: "面部特征分析"
+    sub_topics:
+      - name: "face_shape"
+        description: "面部轮廓特征，如圆脸、方脸、长脸等"
+      - name: "skin_condition"
+        description: "皮肤状态，如细纹、色斑、痘印、松弛程度"
+      - name: "facial_features"
+        description: "五官特征，如单眼皮、鼻梁塌、下颌角宽等"
+      - name: "previous_analysis"
+        description: "历史图片分析结论汇总"
+        update_description: "追加新分析，保留所有历史记录"
+  
+  - topic: "他人面部特征"
+    sub_topics:
+      - name: "relation"
+        description: "与用户的关系（如朋友、亲戚、配偶）"
+      - name: "features"
+        description: "此人的面部特征分析"
+        
+  - topic: "心理状态"
+    sub_topics:
+      - name: "confidence_level"
+        description: "用户对手术的信心程度"
+      - name: "anxiety_points"
+        description: "用户的焦虑点，如家人反对、社会压力"
+      - name: "motivation"
+        description: "求美动机，如职业需要、感情需要、自我提升"
+      - name: "support_needed"
+        description: "用户需要的心理支持类型"
+        
+  - topic: "医美档案"
+    sub_topics:
+      - name: "surgery_history"
+        description: "过往手术史"
+      - name: "allergies"
+        description: "过敏史及药物反应"
+      - name: "desired_projects"
+        description: "用户期望进行的医美项目"
+      - name: "budget"
+        description: "用户的预算范围"
+      - name: "concerns"
+        description: "用户的主要顾虑点"
+        
+  - topic: "个人偏好"
+    sub_topics:
+      - name: "communication_style"
+        description: "用户喜欢的沟通风格（如直接、温和、专业）"
+      - name: "address_preference"
+        description: "用户偏好的称呼"

@@ -265,20 +265,61 @@ class MemoryService {
   }
 
   /**
-   * 搜索记忆事件 (Active Recall)
+   * 统一搜索接口 (支持 memory / history)
    * @param {string} wechatOpenId - 微信OpenID
-   * @param {string} query - 搜索关键词
+   * @param {string|object} queryOrParams - 搜索参数，可以是字符串(兼容旧版)或对象
    * @param {number} limit - 最大返回数量
-   * @returns {Array} 相关的记忆事件列表
+   * @returns {Array}
    */
-  async searchEvents(wechatOpenId, query, limit = 5) {
-    if (this.useMemobase && memobaseService.isAvailable()) {
-      try {
-        return await memobaseService.searchEvents(wechatOpenId, query, limit);
-      } catch (error) {
-        console.error('[MemoryService] 搜索记忆失败:', error);
+  async searchEvents(wechatOpenId, queryOrParams, limit = 5) {
+
+    // 如果是简单字符串，走旧逻辑 -> Memobase
+    if (typeof queryOrParams === 'string') {
+      if (this.useMemobase && memobaseService.isAvailable()) {
+        try {
+          return await memobaseService.searchEvents(wechatOpenId, queryOrParams, limit);
+        } catch (error) {
+          console.error('[MemoryService] 搜索记忆失败:', error);
+        }
+      }
+      return [];
+    }
+
+    // 新 JSON 参数逻辑
+    const params = queryOrParams || {};
+    const type = params.type || 'memory'; // 默认 memory
+    const query = params.query || '';
+
+    // 1. 搜索 Memobase (Type: memory) - 适合查画像、事实、偏好
+    if (type === 'memory') {
+      if (this.useMemobase && memobaseService.isAvailable()) {
+        try {
+          return await memobaseService.searchEvents(wechatOpenId, query, limit);
+        } catch (error) {
+          console.error('[MemoryService] Memobase 搜索失败:', error);
+        }
       }
     }
+
+    // 2. 搜索 Supabase (Type: history) - 适合查具体的聊天记录、第一句话、几号聊过啥
+    if (type === 'history') {
+      if (this.useSupabase && supabaseService.isAvailable()) {
+        try {
+          // 转换参数
+          const options = {
+            query: query,
+            limit: limit,
+            order: params.order || 'desc', // 支持 asc/desc
+            startTime: params.startTime,   // ISO string
+            endTime: params.endTime        // ISO string
+          };
+          return await supabaseService.searchMessages(wechatOpenId, options);
+        } catch (error) {
+          console.error('[MemoryService] Supabase 搜索失败:', error);
+        }
+      }
+    }
+
     return [];
   }
 
@@ -358,7 +399,8 @@ class MemoryService {
       userName: null,
       lastVisit: null,
       lastTopics: [],
-      profile: null
+      profile: null,
+      lastSessionSummary: null // 新增：最后一次会话摘要
     };
 
     // 从 Supabase 获取基础数据
@@ -369,16 +411,19 @@ class MemoryService {
           result.isNewUser = user.totalSessions <= 1;
           result.userName = user.extractedName || user.nickname;
           result.lastVisit = user.lastVisit;
+
+          // 获取上次会话信息
+          result.lastSessionSummary = await supabaseService.getLastConversationSummary(wechatOpenId);
         }
       } catch (error) {
         console.error('[MemoryService] 获取问候语数据失败:', error);
       }
     }
 
-    // 从 Memobase 获取画像
+    // 从 Memobase 获取画像 (包括 facial_analysis 等新画像)
     if (this.useMemobase && memobaseService.isAvailable()) {
       try {
-        result.profile = await memobaseService.getUserProfile(wechatOpenId, 200);
+        result.profile = await memobaseService.getUserProfile(wechatOpenId, 500); // 增加token限制以获取更多画像
       } catch (error) {
         console.error('[MemoryService] 获取用户画像失败:', error);
       }

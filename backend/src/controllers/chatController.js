@@ -386,6 +386,17 @@ exports.sendMessage = async (ws, prompt, images = []) => {
     // ⏱️ 时间感知计算
     // 计算距离上次会话的时间，并注入到 Prompt 中
     let timeAwarenessPrompt = '';
+
+    // 【修改】注入当前时间，确保 LLM 知道现在的绝对时间
+    const now = new Date();
+    const currentDateStr = now.toLocaleDateString('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', weekday: 'long'
+    });
+
+    // 基础时间上下文
+    let timeContext = `\n[System Note: Time Context]\nCurrent Date & Time: ${currentDateStr}\n`;
+
     try {
       // 尝试从 userDataService 获取最后访问时间
       // 注意：此时 history 已经被更新了当前消息，所以要看更早的时间可能需要查 Supabase 或 user metadata
@@ -395,7 +406,7 @@ exports.sendMessage = async (ws, prompt, images = []) => {
       const userData = await userDataPromise;
       if (userData && userData.lastVisit) {
         const lastVisitDate = new Date(userData.lastVisit);
-        const now = new Date();
+        // const now = new Date(); // 上面定义了
         const diffHours = (now - lastVisitDate) / (1000 * 60 * 60);
 
         if (diffHours > 24) {
@@ -422,11 +433,12 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 
     // 如果有时间感知提示，且 history[0] 是 system，则追加提示
     // 或者作为第二条 system 消息插入
-    if (timeAwarenessPrompt && messagesForLlm.length > 0 && messagesForLlm[0].role === 'system') {
+    if (messagesForLlm.length > 0 && messagesForLlm[0].role === 'system') {
       // 更新第一条 System Message 的内容 (仅对本次请求生效，不修改 history 对象)
+      // 【修改】同时注入 current time 和 time awareness
       messagesForLlm[0] = {
         ...messagesForLlm[0],
-        content: messagesForLlm[0].content + timeAwarenessPrompt
+        content: messagesForLlm[0].content + timeContext + timeAwarenessPrompt
       };
     }
 
@@ -520,19 +532,28 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 
             // 检查是不是 SEARCH 指令
             if (fullTag.toUpperCase().includes('SEARCH')) {
-              const query = fullTag.replace(/\[SEARCH:?/, '').replace(']', '').trim();
-              console.log(`🕵️ 捕获到主动回忆指令: "${query}"`);
-              timer.mark('捕获到搜索指令', { query, depth: searchAttemptCount });
+              // 【修改】解析 JSON 或 String 参数
+              let queryOrParams = fullTag.replace(/\[SEARCH:?/, '').replace(']', '').trim();
+
+              // 尝试解析 JSON
+              try {
+                // 如果不以 { 开头，说明是旧文本格式，不做处理
+                if (queryOrParams.startsWith('{')) {
+                  queryOrParams = JSON.parse(queryOrParams);
+                  console.log(`🕵️ 捕获到高级搜索指令:`, queryOrParams);
+                } else {
+                  console.log(`🕵️ 捕获到文本搜索指令: "${queryOrParams}"`);
+                }
+              } catch (e) {
+                console.warn(`⚠️ SEARCH 参数不是有效的 JSON，回退为普通文本搜索: ${queryOrParams}`);
+              }
+
+              timer.mark('捕获到搜索指令', { query: JSON.stringify(queryOrParams), depth: searchAttemptCount });
 
               // ⏸️ 暂停平滑器 (防止用户看到这部分停顿)
               smoother.pause();
 
               // 从 assistantResponse 中移除该指令
-              // 注意：此时 fullTag 刚被加入 assistantResponse 末尾
-              // 安全起见使用 replace，但要小心不要替换掉前面可能出现过的类似文本
-              // 由于是在流中，我们假设它是最新的
-              // TODO: 更精确的做法是 assistantResponse.slice(0, -fullTag.length) ?
-              // 考虑到 chunk 边界，replace 比较稳妥，只要 prompt 不会让 LLM 重复输出 tag
               assistantResponse = assistantResponse.replace(fullTag, '');
 
               // 清理 searchBuffer
@@ -541,11 +562,12 @@ exports.sendMessage = async (ws, prompt, images = []) => {
               // --- 执行异步搜索 ---
               try {
                 let searchResults = [];
-                const searchQuery = query || prompt; // 兜底
+                // 如果参数是空的，兜底用 prompt
+                const finalParams = queryOrParams || prompt;
                 try {
-                  searchResults = await memoryService.searchEvents(userId, searchQuery, 3);
+                  searchResults = await memoryService.searchEvents(userId, finalParams, 3);
                 } catch (memobaseError) {
-                  console.error('Memobase 搜索失败:', memobaseError.message);
+                  console.error('Memobase/Supabase 搜索失败:', memobaseError.message);
                   searchResults = [];
                 }
 
@@ -554,7 +576,7 @@ exports.sendMessage = async (ws, prompt, images = []) => {
                   console.log(`🔍 搜索完成，找到 ${searchResults.length} 条记录`);
                   searchResultContext = searchResults.map(e => {
                     const time = e.timestamp ? new Date(e.timestamp).toLocaleDateString() : '未知时间';
-                    return `- ${time}: ${e.content || e}`;
+                    return `- [${time}]: ${e.content || e}`;
                   }).join('\n');
                 } else {
                   console.log('🔍 搜索完成，无记录');
@@ -563,11 +585,12 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 
                 // 构建后续 Prompt
                 const alreadySpoken = assistantResponse.trim();
+                const safeSearchQuery = typeof queryOrParams === 'object' ? JSON.stringify(queryOrParams) : queryOrParams;
 
                 const followUpSystemPrompt = `${promptService.getSystemPrompt()}
 
 【重要插播 - 内部思维链】
-系统根据你的请求 (${searchQuery}) 搜索到了以下信息：
+系统根据你的请求 (${safeSearchQuery}) 搜索到了以下信息：
 ${searchResultContext}
 
 请基于以上搜索结果，接着你刚才的话 ("${alreadySpoken.substring(Math.max(0, alreadySpoken.length - 20))}") 继续把话说完。
@@ -590,9 +613,6 @@ ${searchResultContext}
                 console.error('❌ 搜索流程异常:', searchErr);
                 // 恢复并继续
                 smoother.resume();
-                // 既然处理失败，就不要设 foundSearchTagInThisLoop 了，让它继续输出或者结束
-                // 但 buffer 里的 tag 已经被消耗了。
-                // 简单起见，终止递归，fallback
                 searchAttemptCount = MAX_SEARCH_ATTEMPTS;
                 break;
               }
@@ -605,7 +625,7 @@ ${searchResultContext}
           } else {
             // 有 '[' 但没有 ']'，继续缓冲
             // 安全检查：如果缓冲太长，说明可能不是 tag，强制输出以防卡死
-            if (searchBuffer.length > 50) {
+            if (searchBuffer.length > 100) { // 稍微放宽一点，因为 JSON 可能比较长
               smoother.push(cleanText(searchBuffer));
               searchBuffer = '';
             }
@@ -747,6 +767,7 @@ exports.sendGreeting = async (ws, userInfo = {}) => {
     const userData = await userDataService.getUserData(userId);
     timer.mark('用户数据获取完成');
 
+    // 【修改】直接通过 greetingService 生成，已经在 greetingService 内部集成了 memoryService.getGreetingData
     const greeting = await greetingService.generateGreeting(userData, userId);
     timer.mark('问候语生成完成');
 
@@ -800,258 +821,6 @@ exports.handleDisconnect = async (ws) => {
   try {
     await memoryService.onUserDisconnect(userId);
   } catch (err) {
-    console.warn('记录用户断开失败:', err.message);
+    console.warn('用户断开连接清理失败', err.message);
   }
 };
-
-// 存储语音识别会话
-const speechSessions = new Map();
-
-exports.handleStreamingSpeechStart = async (ws, data) => {
-  console.log('🎤 开始语音识别会话:', data.sessionId);
-  console.log('音频配置:', JSON.stringify(data.config || {}, null, 2));
-
-  try {
-    // 初始化会话数据
-    speechSessions.set(data.sessionId, {
-      ws: ws,
-      userId: ws.userId,
-      audioChunks: [],
-      startTime: Date.now(),
-      config: data.config || {},
-      totalBytes: 0
-    });
-
-    console.log('✅ 语音识别会话初始化成功:', data.sessionId);
-
-    // 发送确认消息给前端
-    ws.send(JSON.stringify({
-      type: 'speech_status',
-      sessionId: data.sessionId,
-      status: 'started',
-      message: '语音识别会话已启动'
-    }));
-
-  } catch (error) {
-    console.error('初始化语音识别会话失败:', error);
-    ws.send(JSON.stringify({
-      type: 'speech_result',
-      sessionId: data.sessionId,
-      error: '语音识别初始化失败'
-    }));
-  }
-};
-
-exports.handleStreamingSpeechFrame = async (ws, data) => {
-  const session = speechSessions.get(data.sessionId);
-  if (!session) {
-    console.error('未找到语音识别会话:', data.sessionId);
-    return;
-  }
-
-  // 收集音频数据
-  if (data.audio) {
-    // 将base64字符串转换为Buffer
-    let audioBuffer;
-    if (typeof data.audio === 'string') {
-      audioBuffer = Buffer.from(data.audio, 'base64');
-    } else if (Buffer.isBuffer(data.audio)) {
-      audioBuffer = data.audio;
-    } else {
-      console.error('不支持的音频数据格式:', typeof data.audio);
-      return;
-    }
-
-    session.audioChunks.push(audioBuffer);
-    session.totalBytes += audioBuffer.length;
-
-    // 每5帧输出一次统计，避免日志过多
-    if (session.audioChunks.length % 5 === 0) {
-      console.log(`收到音频帧: ${audioBuffer.length} 字节, 总计: ${session.audioChunks.length} 帧, 累计: ${session.totalBytes} 字节`);
-    }
-  }
-};
-
-exports.handleStreamingSpeechEnd = async (ws, data) => {
-  console.log('🛑 结束语音识别会话:', data.sessionId);
-
-  const session = speechSessions.get(data.sessionId);
-  if (!session) {
-    console.error('未找到语音识别会话:', data.sessionId);
-    return;
-  }
-
-  try {
-    // 合并所有音频数据
-    const totalAudioSize = session.audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    console.log(`合并音频数据: ${session.audioChunks.length} 帧, 总大小: ${totalAudioSize} 字节`);
-
-    if (totalAudioSize === 0) {
-      console.log('没有音频数据，跳过识别');
-      ws.send(JSON.stringify({
-        type: 'speech_result',
-        sessionId: data.sessionId,
-        text: '',
-        message: '没有检测到音频'
-      }));
-      speechSessions.delete(data.sessionId);
-      return;
-    }
-
-    // 验证所有音频块都是Buffer
-    const validChunks = session.audioChunks.filter(chunk => Buffer.isBuffer(chunk));
-    if (validChunks.length !== session.audioChunks.length) {
-      console.warn(`过滤掉 ${session.audioChunks.length - validChunks.length} 个无效的音频块`);
-    }
-
-    // 合并音频buffer
-    const combinedAudio = Buffer.concat(validChunks);
-    console.log(`开始Azure语音识别, 音频大小: ${combinedAudio.length} 字节`);
-
-    // 使用Azure Speech Services进行识别
-    const recognizedText = await performAzureSpeechRecognition(combinedAudio);
-
-    console.log('✅ 语音识别完成:', recognizedText);
-
-    // 发送识别结果
-    ws.send(JSON.stringify({
-      type: 'speech_result',
-      sessionId: data.sessionId,
-      text: recognizedText,
-      success: true
-    }));
-
-    // 🔥 通知前端显示语音消息并直接发送给LLM
-    if (recognizedText && recognizedText.trim()) {
-      console.log('🤖 [VERSION 2.1.0] 通知前端显示语音消息并发送给LLM:', recognizedText.trim());
-
-      // 立即发送语音消息给前端显示
-      console.log('📤 发送voice_message_display消息到前端');
-      ws.send(JSON.stringify({
-        type: 'voice_message_display',
-        text: recognizedText.trim(),
-        sessionId: data.sessionId,
-        version: '2.1.0'
-      }));
-
-      // 立即调用LLM处理
-      console.log('🚀 立即调用LLM处理语音识别结果');
-      exports.sendMessage(ws, recognizedText.trim());
-    }
-
-  } catch (error) {
-    console.error('语音识别失败:', error);
-    ws.send(JSON.stringify({
-      type: 'speech_result',
-      sessionId: data.sessionId,
-      error: '语音识别失败: ' + error.message
-    }));
-  } finally {
-    // 清理会话
-    speechSessions.delete(data.sessionId);
-  }
-};
-
-exports.handleStreamingSpeechCancel = async (ws, data) => {
-  console.log('🚫 取消语音识别会话:', data.sessionId);
-  speechSessions.delete(data.sessionId);
-};
-
-// Azure Speech Services 语音识别函数
-async function performAzureSpeechRecognition(audioBuffer) {
-  const sdk = require('microsoft-cognitiveservices-speech-sdk');
-
-  // 从环境变量获取Azure Speech配置
-  const speechKey = process.env.AZURE_SPEECH_KEY;
-  const speechRegion = process.env.AZURE_SPEECH_REGION || 'koreacentral';
-  const language = process.env.AZURE_SPEECH_LANGUAGE || 'zh-CN';
-
-  if (!speechKey) {
-    throw new Error('Azure Speech Key未配置');
-  }
-
-  console.log(`使用Azure Speech Services: region=${speechRegion}, language=${language}`);
-
-  return new Promise((resolve, reject) => {
-    let isResolved = false;
-    let recognizer = null;
-
-    try {
-      // 创建语音配置
-      const speechConfig = sdk.SpeechConfig.fromSubscription(speechKey, speechRegion);
-      speechConfig.speechRecognitionLanguage = language;
-
-      // 创建音频配置
-      const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
-      const audioStream = sdk.AudioInputStream.createPushStream(audioFormat);
-      const audioConfig = sdk.AudioConfig.fromStreamInput(audioStream);
-
-      // 创建识别器
-      recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
-
-      // 安全关闭函数
-      const safeClose = () => {
-        if (recognizer && !isResolved) {
-          try {
-            recognizer.close();
-          } catch (e) {
-            console.warn('识别器关闭时出现警告:', e.message);
-          }
-        }
-      };
-
-      // 设置识别事件
-      recognizer.recognized = (s, e) => {
-        if (isResolved) return;
-
-        if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
-          console.log(`Azure识别结果: "${e.result.text}"`);
-          isResolved = true;
-          safeClose();
-          resolve(e.result.text);
-        } else if (e.result.reason === sdk.ResultReason.NoMatch) {
-          console.log('Azure未识别到语音内容');
-          isResolved = true;
-          safeClose();
-          resolve('');
-        }
-      };
-
-      recognizer.canceled = (s, e) => {
-        if (isResolved) return;
-
-        console.error('Azure识别被取消:', e.errorDetails);
-        isResolved = true;
-        safeClose();
-        reject(new Error(`识别被取消: ${e.errorDetails}`));
-      };
-
-      recognizer.sessionStopped = (s, e) => {
-        console.log('Azure识别会话结束');
-        // 不在这里关闭，让其他事件处理
-      };
-
-      // 写入音频数据
-      audioStream.write(audioBuffer);
-      audioStream.close();
-
-      // 开始识别
-      console.log('开始Azure语音识别...');
-      recognizer.recognizeOnceAsync();
-
-      // 设置超时
-      setTimeout(() => {
-        if (!isResolved) {
-          isResolved = true;
-          safeClose();
-          reject(new Error('语音识别超时'));
-        }
-      }, 10000);
-
-    } catch (error) {
-      console.error('Azure语音识别初始化失败:', error);
-      isResolved = true;
-      reject(error);
-    }
-  });
-}

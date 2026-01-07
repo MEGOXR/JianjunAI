@@ -44,10 +44,18 @@ class GreetingService {
     if (userId) {
       try {
         const greetingData = await memoryService.getGreetingData(userId);
+
+        // 【新增】智能问候逻辑：优先检查医美档案
         if (greetingData?.profile) {
-          console.log('使用 Memobase 用户画像生成问候语');
-          lastTopic = this.extractTopicFromProfile(greetingData.profile);
+          console.log('使用 Memobase 用户画像生成问候语', greetingData.profile);
+          lastTopic = this.extractSmartTopicFromProfile(greetingData.profile);
         }
+
+        // 如果没有提取到智能话题，尝试 fallback 到 Supabase 的会话总结
+        if (!lastTopic && greetingData?.lastSessionSummary) {
+          lastTopic = greetingData.lastSessionSummary;
+        }
+
       } catch (err) {
         console.warn('获取 Memobase 用户画像失败:', err.message);
       }
@@ -68,19 +76,45 @@ class GreetingService {
   }
 
   /**
-   * 从 Memobase 用户画像中提取话题
+   * 从 Memobase 用户画像中智能提取话题
+   * 优先提取：手术史、期望项目、焦虑点
    */
-  extractTopicFromProfile(profile) {
+  extractSmartTopicFromProfile(profile) {
     if (!profile || !Array.isArray(profile)) return null;
 
-    // 查找用户兴趣相关的画像项
+    // 1. 查找 "医美档案" -> "desired_projects" (期望项目)
+    const desiredProject = profile.find(item =>
+      item.topic === '医美档案' && item.sub_topic === 'desired_projects'
+    );
+    if (desiredProject && desiredProject.content) {
+      return `你考虑的${desiredProject.content.substring(0, 10)}项目`;
+    }
+
+    // 2. 查找 "医美档案" -> "surgery_history" (过往手术史 - 适合术后关怀)
+    // 假设内容里有时间信息更好，这里简单提取
+    const surgeryHistory = profile.find(item =>
+      item.topic === '医美档案' && item.sub_topic === 'surgery_history'
+    );
+    if (surgeryHistory && surgeryHistory.content) {
+      return `你之前的${surgeryHistory.content.substring(0, 10)}手术恢复情况`;
+    }
+
+    // 3. 查找 "心理状态" -> "anxiety_points" (焦虑点)
+    const anxiety = profile.find(item =>
+      item.topic === '心理状态' && item.sub_topic === 'anxiety_points'
+    );
+    if (anxiety && anxiety.content) {
+      return `你担心的${anxiety.content.substring(0, 10)}问题`;
+    }
+
+    // 4. Fallback: 查找其他兴趣
     for (const item of profile) {
       if (item.topic?.includes('interest') || item.topic?.includes('concern')) {
         return item.content?.substring(0, 15) || null;
       }
     }
 
-    // 如果没有找到兴趣，返回第一个非空内容
+    // 5. Fallback: 返回第一个非空内容
     for (const item of profile) {
       if (item.content) {
         return item.content.substring(0, 15);
@@ -88,6 +122,13 @@ class GreetingService {
     }
 
     return null;
+  }
+
+  /**
+   * 从 Memobase 用户画像中提取话题 (Legacy)
+   */
+  extractTopicFromProfile(profile) {
+    return this.extractSmartTopicFromProfile(profile);
   }
 
   /**
@@ -100,7 +141,7 @@ class GreetingService {
       console.log('没有缓存用户数据，发送问候语');
       return true;
     }
-    
+
     return this.shouldSendGreeting(userData);
   }
 
@@ -114,22 +155,22 @@ class GreetingService {
       console.log('没有用户数据，发送问候语');
       return true;
     }
-    
+
     if (!userData.lastVisit) {
       // 有用户数据但没有访问记录，说明是新创建的用户，发送问候语
       console.log('新用户没有访问记录，发送问候语');
       return true;
     }
-    
+
     const now = new Date();
     const lastVisit = new Date(userData.lastVisit);
     const hoursSinceLastVisit = (now - lastVisit) / (1000 * 60 * 60);
-    
+
     // 如果距离上次访问超过24小时，发送问候语
     const shouldSend = hoursSinceLastVisit >= 24;
-    
+
     console.log(`用户上次访问时间: ${lastVisit.toISOString()}, 距今${hoursSinceLastVisit.toFixed(1)}小时, ${shouldSend ? '需要' : '不需要'}发送问候语`);
-    
+
     return shouldSend;
   }
 
@@ -166,7 +207,7 @@ ${recentMessages}
       });
 
       const summary = response.choices[0]?.message?.content?.trim();
-      
+
       // 如果AI总结失败或为空，使用备选方案
       if (!summary || summary.length > 20) {
         return this.fallbackTopicExtraction(chatHistory);
@@ -186,15 +227,15 @@ ${recentMessages}
       const message = chatHistory[i];
       if (message.role === 'user' && message.content) {
         const content = message.content.trim();
-        
+
         // 提取关键词
         const keywords = ['双眼皮', '隆鼻', '瘦脸', '除皱', '美白', '祛斑', '丰胸', '吸脂', '面部', '皮肤', '注射', '手术'];
         const foundKeyword = keywords.find(keyword => content.includes(keyword));
-        
+
         if (foundKeyword) {
           return foundKeyword + '相关问题';
         }
-        
+
         // 如果没有关键词，简单截断
         if (content.length <= 15) {
           return content;
@@ -202,7 +243,7 @@ ${recentMessages}
         return content.substring(0, 12) + '...';
       }
     }
-    
+
     return '整形美容咨询';
   }
 }

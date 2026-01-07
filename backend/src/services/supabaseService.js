@@ -223,6 +223,46 @@ class SupabaseService {
     return data;
   }
 
+  /**
+ * 获取上一次会话的总结（用于生成Smart Greeting）
+ * @param {string} wechatOpenId - 微信OpenID
+ * @returns {string|null} 会话总结 topic
+ */
+  async getLastConversationSummary(wechatOpenId) {
+    if (!this.isAvailable()) return null;
+
+    const user = await this.getUserByWechatId(wechatOpenId);
+    if (!user) return null;
+
+    try {
+      // 1. 获取最近的一个已结束的会话
+      const { data: lastSession, error } = await this.client
+        .from('chat_sessions')
+        .select('*')
+        .eq('user_id', user.uuid)
+        .eq('is_active', false)
+        .order('ended_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error || !lastSession) return null;
+
+      // 2. 如果会话数据里直接有 summary 字段 (假设未来会加)，直接返回
+      if (lastSession.summary) return lastSession.summary;
+
+      // 3. 否则，获取该会话的最后几条消息作为 "Raw Context"
+      // 这里为了简单，我们不实时调用LLM总结，而是返回部分消息供 greetingService 使用
+      // 或者 greetingService 自己去调 summary 逻辑，这里只负责查数据
+      // 我们直接返回 null，让 greetingService 通过 getRecentMessages 去处理
+      // 但为了方便，我们可以返回该 session 的 ID
+      return { sessionId: lastSession.id, endedAt: lastSession.ended_at };
+
+    } catch (err) {
+      console.error('[Supabase] 获取上一次会话失败:', err);
+      return null;
+    }
+  }
+
   // ==================== 消息操作 ====================
 
   /**
@@ -323,6 +363,59 @@ class SupabaseService {
     return data.reverse().map(msg => ({
       role: msg.role,
       content: msg.content
+    }));
+  }
+
+  /**
+   * 搜索消息 (支持时间范围和关键词)
+   * @param {string} wechatOpenId - 微信OpenID
+   * @param {object} options - 搜索选项 { query, startTime, endTime, order='desc', limit=10 }
+   */
+  async searchMessages(wechatOpenId, options = {}) {
+    if (!this.isAvailable()) return [];
+
+    const user = await this.getUserByWechatId(wechatOpenId);
+    if (!user) return [];
+
+    let query = this.client
+      .from('chat_messages')
+      .select('role, content, created_at')
+      .eq('user_id', user.uuid);
+
+    // 关键词搜索
+    if (options.query) {
+      // 使用 ilike 进行模糊匹配 (Supabase Postgres)
+      // query = query.textSearch('content', options.query); // 全文检索需配索引
+      query = query.ilike('content', `%${options.query}%`);
+    }
+
+    // 时间范围
+    if (options.startTime) {
+      query = query.gte('created_at', options.startTime);
+    }
+    if (options.endTime) {
+      query = query.lte('created_at', options.endTime);
+    }
+
+    // 排序与限制
+    const ascending = options.order === 'asc';
+    query = query.order('created_at', { ascending });
+
+    if (options.limit) {
+      query = query.limit(options.limit);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('[Supabase] 搜索消息失败:', error);
+      return [];
+    }
+
+    return data.map(msg => ({
+      role: msg.role,
+      content: msg.content,
+      timestamp: msg.created_at
     }));
   }
 
