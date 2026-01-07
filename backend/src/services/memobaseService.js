@@ -18,6 +18,8 @@ class MemobaseService {
     this.bufferFlushInterval = 60000; // 1分钟
     this.maxBufferSize = 10; // 最大缓冲消息数
     this.flushTimer = null;
+    this.projectUrl = null; // 存储项目URL用于REST API调用
+    this.apiKey = null; // 存储API Key
   }
 
   /**
@@ -40,12 +42,17 @@ class MemobaseService {
       this.client = new MemoBaseClient(projectUrl, apiKey);
       this.Blob = Blob;
       this.BlobType = BlobType;
+      this.projectUrl = projectUrl;
+      this.apiKey = apiKey;
       this.isEnabled = true;
 
       console.log(`[Memobase] 客户端已创建`);
       console.log(`[Memobase] Project URL: ${projectUrl}`);
       // 不要打印完整的 API Key
       console.log(`[Memobase] API Key: ${apiKey ? apiKey.substring(0, 8) + '...' : 'undefined'}`);
+
+      // 从服务器恢复用户ID映射
+      await this._loadUserIdMappings();
 
       // 启动定期刷新
       this._startPeriodicFlush();
@@ -56,6 +63,65 @@ class MemobaseService {
       console.error('[Memobase] 初始化失败:', error);
       this.isEnabled = false;
       return false;
+    }
+  }
+
+  /**
+   * 从Memobase服务器加载已有的用户ID映射
+   * @private
+   */
+  async _loadUserIdMappings() {
+    try {
+      const response = await fetch(`${this.projectUrl}/api/v1/project/users?limit=1000`, {
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        console.warn('[Memobase] 无法加载用户映射:', response.status);
+        return;
+      }
+
+      const result = await response.json();
+      const users = result.data?.users || [];
+
+      let loadedCount = 0;
+      for (const user of users) {
+        // 从 additional_fields 中获取 wechat_open_id
+        const wechatOpenId = user.additional_fields?.data?.wechat_open_id;
+        if (wechatOpenId && user.id) {
+          // 检查是否已有更新的记录（取最新的）
+          const existing = this.idMapping.get(wechatOpenId);
+          if (!existing) {
+            // 保存映射，优先使用profile_count和event_count最多的用户
+            this.idMapping.set(wechatOpenId, {
+              memobaseId: user.id,
+              profileCount: user.profile_count || 0,
+              eventCount: user.event_count || 0,
+              updatedAt: user.updated_at
+            });
+            loadedCount++;
+          } else {
+            // 如果已有记录，选择数据更多的那个
+            const existingTotal = existing.profileCount + existing.eventCount;
+            const newTotal = (user.profile_count || 0) + (user.event_count || 0);
+            if (newTotal > existingTotal) {
+              this.idMapping.set(wechatOpenId, {
+                memobaseId: user.id,
+                profileCount: user.profile_count || 0,
+                eventCount: user.event_count || 0,
+                updatedAt: user.updated_at
+              });
+            }
+          }
+        }
+      }
+
+      console.log(`[Memobase] 从服务器恢复了 ${loadedCount} 个用户映射`);
+    } catch (error) {
+      console.error('[Memobase] 加载用户映射失败:', error);
     }
   }
 
@@ -82,13 +148,25 @@ class MemobaseService {
     }
 
     try {
-      let memobaseId = this.idMapping.get(wechatOpenId);
+      // 从映射中获取（新结构包含 memobaseId 和统计信息）
+      const mapping = this.idMapping.get(wechatOpenId);
+      let memobaseId = mapping?.memobaseId || mapping; // 兼容旧格式
       let user;
+
+      if (!memobaseId || typeof memobaseId === 'object') {
+        // 需要重新获取有效的 memobaseId
+        memobaseId = mapping?.memobaseId;
+      }
 
       if (!memobaseId) {
         // 创建新用户，Memobase 会返回 UUID
         memobaseId = await this.client.addUser();
-        this.idMapping.set(wechatOpenId, memobaseId);
+        this.idMapping.set(wechatOpenId, {
+          memobaseId,
+          profileCount: 0,
+          eventCount: 0,
+          updatedAt: new Date().toISOString()
+        });
 
         // 更新用户元数据，存储 wechatOpenId
         await this.client.updateUser(memobaseId, {
@@ -96,6 +174,8 @@ class MemobaseService {
         });
 
         console.log(`[Memobase] 创建新用户 ${wechatOpenId} -> ${memobaseId}`);
+      } else {
+        console.log(`[Memobase] 复用已有用户 ${wechatOpenId} -> ${memobaseId}`);
       }
 
       // 获取用户对象
@@ -358,13 +438,15 @@ ${context}
   }
 
   /**
-   * 搜索用户历史事件
+   * 搜索用户历史事件（使用语义搜索）
    * @param {string} userId - 用户ID
    * @param {string} query - 搜索关键词/问题
    * @param {number} limit - 返回结果数量
+   * @param {number} similarityThreshold - 相似度阈值 (0-1)
+   * @param {number} timeRangeInDays - 搜索时间范围（天数）
    * @returns {Array} 搜索结果列表
    */
-  async searchEvents(userId, query, limit = 5) {
+  async searchEvents(userId, query, limit = 5, similarityThreshold = 0.2, timeRangeInDays = 365) {
     if (!this.isAvailable()) return [];
 
     try {
@@ -373,38 +455,44 @@ ${context}
 
       console.log(`[Memobase]正在搜索用户 ${userId} 的记忆: "${query}"`);
 
-      // 使用 Memobase 的搜索功能
-      // 注意: 具体API方法名可能取决于SDK版本，这里我们要查阅SDK文档或尝试 searchContext/searchEvent
-      // 假设 SDK 提供了 search 接口
       let results = [];
 
-      // 尝试调用 user.search 或 client.searchEvent
-      // 根据之前的分析，我们使用 searchEvent 或 context 搜索
-      // 这里为了稳健，先尝试 mock 或者查阅最确定的 context API
-      // 如果 user 对象有 search 方法：
-      if (typeof user.search === 'function') {
-        results = await user.search(query, limit);
-      } else if (this.client && typeof this.client.searchEvent === 'function') {
-        // 备用：如果SDK是在client层级
-        // results = await this.client.searchEvent(user.id, query); 
-        // 暂时无法确定完全准确的API，先假设 context 可以带 query 或者 fallback
-        // 实际上当前 SDK 版本 user.context 是为了构建 prompt，不一定是搜索。
-        // 让我们假设我们需要自行实现一个简单的过滤，或者 SDK 确实支持搜索。
+      // 使用SDK的语义搜索API（向量搜索）
+      try {
+        const events = await user.searchEvent(query, limit, similarityThreshold, timeRangeInDays);
 
-        // 根据最新的 Memobase SDK 理解 (0.0.18)，可能暂时没有直接的 searchEvent 暴露在 user 对象上
-        // 但我们可以利用 user.context 的变体或者假设它会在未来支持。
-        // 为了不阻塞，我们这里先做一个模拟实现，或者只用 context。
+        if (events && events.length > 0) {
+          results = events.map(event => ({
+            source: 'event',
+            eventId: event.id,
+            content: event.event_data?.event_tip || '',
+            profileDelta: event.event_data?.profile_delta || [],
+            similarity: event.similarity,
+            timestamp: event.created_at || new Date().toISOString()
+          }));
+        }
+      } catch (searchError) {
+        console.warn(`[Memobase] searchEvent失败，尝试备用方法:`, searchError.message);
+        // 备用方法：获取profile直接匹配
+        try {
+          const profiles = await user.profile(2000);
+          if (profiles && profiles.length > 0) {
+            // 简单关键词匹配作为备用
+            const queryLower = query.toLowerCase();
+            const matchedProfiles = profiles.filter(p =>
+              p.content?.toLowerCase().includes(queryLower) ||
+              p.topic?.toLowerCase().includes(queryLower) ||
+              p.sub_topic?.toLowerCase().includes(queryLower)
+            );
 
-        // TODO: 确认 Memobase search API。暂时返回空或模拟数据用于测试流程。
-        // 如果真的要搜，可能需要利用 vector database 的 search。
-        // 这里我们先打日志，假装没搜到，或者返回最近的 events。
-        const context = await user.context(1000, 500);
-        if (context && context.events) {
-          // 简单的本地关键词匹配作为 fallback
-          results = context.events.filter(e => {
-            const content = e.content || e;
-            return typeof content === 'string' && content.includes(query);
-          });
+            results = matchedProfiles.map(p => ({
+              source: 'profile',
+              content: `${p.topic}::${p.sub_topic}: ${p.content}`,
+              timestamp: p.updated_at || p.created_at || new Date().toISOString()
+            }));
+          }
+        } catch (profileError) {
+          console.error(`[Memobase] 备用profile搜索也失败:`, profileError.message);
         }
       }
 
@@ -412,6 +500,52 @@ ${context}
       return results;
     } catch (error) {
       console.error(`[Memobase] 搜索用户 ${userId} 记忆失败:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * 搜索用户Profile（语义搜索）
+   * @param {string} userId - 用户ID
+   * @param {string} query - 搜索关键词/问题
+   * @param {number} limit - 返回结果数量
+   * @returns {Array} Profile搜索结果
+   */
+  async searchProfile(userId, query, limit = 5) {
+    if (!this.isAvailable()) return [];
+
+    try {
+      const user = await this.getOrCreateUser(userId);
+      if (!user) return [];
+
+      console.log(`[Memobase] 正在搜索用户 ${userId} 的Profile: "${query}"`);
+
+      // 获取用户所有profile，然后做关键词匹配
+      // （Memobase JS SDK目前没有profile语义搜索，但events搜索会包含profile_delta）
+      const profiles = await user.profile(2000);
+
+      if (!profiles || profiles.length === 0) {
+        return [];
+      }
+
+      // 简单关键词匹配
+      const queryLower = query.toLowerCase();
+      const results = profiles.filter(p =>
+        p.content?.toLowerCase().includes(queryLower) ||
+        p.topic?.toLowerCase().includes(queryLower) ||
+        p.sub_topic?.toLowerCase().includes(queryLower)
+      ).slice(0, limit).map(p => ({
+        source: 'profile',
+        topic: p.topic,
+        subTopic: p.sub_topic,
+        content: p.content,
+        timestamp: p.updated_at || p.created_at
+      }));
+
+      console.log(`[Memobase] Profile搜索完成，找到 ${results.length} 条`);
+      return results;
+    } catch (error) {
+      console.error(`[Memobase] 搜索Profile失败:`, error);
       return [];
     }
   }
