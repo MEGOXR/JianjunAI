@@ -8,7 +8,7 @@ services:
     container_name: memobase
     restart: always
     ports:
-      - "8019:8000"  # 外部8019 -> 容器内部8000
+      - "8019:8000" # 外部8019 -> 容器内部8000
     environment:
       - DATABASE_URL=postgresql://memobase:memobase_password@postgres:5432/memobase
       - REDIS_URL=redis://redis:6379/0
@@ -19,6 +19,9 @@ services:
       - MEMOBASE_LLM_BASE_URL=${AZURE_OPENAI_EMBEDDING_URL}
       - MEMOBASE_EMBEDDING_API_KEY=${AZURE_OPENAI_API_KEY}
       - MEMOBASE_EMBEDDING_BASE_URL=${AZURE_OPENAI_EMBEDDING_URL}
+      # CORS Config for Inspector
+      - CORS_ORIGINS=http://20.2.67.46:3000,http://localhost:3000
+      - BACKEND_CORS_ORIGINS=http://20.2.67.46:3000,http://localhost:3000
     volumes:
       - ./config.yaml:/app/config.yaml
     depends_on:
