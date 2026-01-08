@@ -1,10 +1,8 @@
-version: '3.8'
-
-# Deployment to new VM (20.2.67.46) - 2026-01-07 11:02 (UFW fixed)
+# Memobase Deployment - Updated 2026-01-08 (使用官方镜像)
 services:
   memobase:
-    # 镜像来自您的 GitHub 仓库 (已自动配置为 megoxr/jianjunai)
-    image: ghcr.io/megoxr/jianjunai/memobase:latest
+    # 使用官方 Memobase 镜像（无需私有镜像）
+    image: ghcr.io/memodb-io/memobase:latest
     container_name: memobase
     restart: always
     ports:

@@ -8,53 +8,10 @@ on:
       - main  # 只有推送到 main 分支时才触发
   workflow_dispatch: # 允许手动触发
 
-env:
-  REGISTRY: ghcr.io
-  # 必须全小写，否则 Docker 会报错。手动指定确保安全。
-  IMAGE_NAME: megoxr/jianjunai/memobase
-
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v2
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest
-            type=sha
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v4
-        with:
-          context: ./deploy/memobase
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
   deploy:
-    needs: build-and-push
     runs-on: ubuntu-latest
-    
-    # 只有当配置了 Azure SSH Secret 时才运行部署步骤
-    if: true
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -97,10 +54,7 @@ jobs:
           key: ${{ secrets.AZURE_SSH_KEY }}
           script: |
             cd /home/azureuser/memobase
-            # 登录 GHCR 以拉取私有镜像 (如果仓库是私有的)
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            # 拉取最新镜像并重启
+            # 使用官方 Memobase 镜像（公开镜像，无需登录）
             docker compose pull memobase
             docker compose up -d memobase
             docker system prune -f  # 清理旧镜像
