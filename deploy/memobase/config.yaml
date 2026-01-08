@@ -23,7 +23,7 @@ embedding_dim: 3072
 # Auth Config
 auth_enabled: true
 # 您的专属 API Key
-api_key: "mb_sk_73928174928374928374982374982374"
+api_key: "4978a9bdf43c32f81e344d3a2714ce5479bf6c8d5e5a024c77aaa1210f419da3"
 
 # User Profile Config
 additional_user_profiles:
