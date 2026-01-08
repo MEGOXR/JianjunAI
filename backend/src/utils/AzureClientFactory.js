@@ -1,9 +1,13 @@
-const { AzureOpenAI } = require("openai");
+const { OpenAI, AzureOpenAI } = require("openai");
 
 /**
  * Azure OpenAI 客户端工厂类
  * 统一管理 Azure OpenAI 客户端的创建和配置
  * 使用单例模式避免重复创建客户端实例
+ *
+ * 支持两种模式：
+ * - 新模式 (GPT-5.2+): 使用标准 OpenAI 客户端 + base_url
+ * - 旧模式 (GPT-4o等): 使用 AzureOpenAI 客户端
  */
 class AzureClientFactory {
   constructor() {
@@ -16,6 +20,22 @@ class AzureClientFactory {
    */
   static getEnvVar(name) {
     return process.env[name] || process.env[`APPSETTING_${name}`] || null;
+  }
+
+  /**
+   * 检测是否使用新的 OpenAI 兼容模式 (GPT-5.2+)
+   * 如果 endpoint 包含 /openai/v1 或 deployment 包含 5.2/5-2，使用新模式
+   */
+  isNewApiMode() {
+    const config = this.getConfig();
+    const endpoint = config.endpoint || '';
+    const deployment = config.deployment || '';
+
+    // 检测新API模式的条件
+    return endpoint.includes('/openai/v1') ||
+           deployment.includes('5.2') ||
+           deployment.includes('5-2') ||
+           deployment.includes('gpt-5');
   }
 
   /**
@@ -43,8 +63,12 @@ class AzureClientFactory {
 
     if (!config.endpoint) missing.push('AZURE_OPENAI_ENDPOINT');
     if (!config.apiKey) missing.push('AZURE_OPENAI_API_KEY');
-    if (!config.apiVersion) missing.push('OPENAI_API_VERSION');
     if (!config.deployment) missing.push('AZURE_OPENAI_DEPLOYMENT_NAME');
+
+    // 新模式不需要 apiVersion
+    if (!this.isNewApiMode() && !config.apiVersion) {
+      missing.push('OPENAI_API_VERSION');
+    }
 
     if (missing.length > 0) {
       const errorMsg = `Azure OpenAI configuration missing: ${missing.join(', ')}`;
@@ -69,35 +93,70 @@ class AzureClientFactory {
   }
 
   /**
+   * 构建新模式的 base_url
+   * 确保 endpoint 以 /openai/v1 结尾
+   */
+  buildBaseUrl(endpoint) {
+    let baseUrl = endpoint.replace(/\/+$/, ''); // 移除尾部斜杠
+    if (!baseUrl.endsWith('/openai/v1')) {
+      baseUrl = `${baseUrl}/openai/v1`;
+    }
+    return baseUrl;
+  }
+
+  /**
    * 获取 Azure OpenAI 客户端（单例）
-   * @returns {AzureOpenAI}
+   * @returns {OpenAI|AzureOpenAI}
    */
   getClient() {
     if (!this.client) {
       const config = this.validateConfig();
-      this.client = new AzureOpenAI({
-        apiKey: config.apiKey,
-        endpoint: config.endpoint,
-        apiVersion: config.apiVersion,
-        deployment: config.deployment,
-      });
-      console.log('Azure OpenAI client initialized');
+
+      if (this.isNewApiMode()) {
+        // 新模式：使用标准 OpenAI 客户端 (GPT-5.2+)
+        const baseUrl = this.buildBaseUrl(config.endpoint);
+        this.client = new OpenAI({
+          apiKey: config.apiKey,
+          baseURL: baseUrl,
+        });
+        console.log(`Azure OpenAI client initialized (new API mode)`);
+        console.log(`  base_url: ${baseUrl}`);
+        console.log(`  model: ${config.deployment}`);
+      } else {
+        // 旧模式：使用 AzureOpenAI 客户端
+        this.client = new AzureOpenAI({
+          apiKey: config.apiKey,
+          endpoint: config.endpoint,
+          apiVersion: config.apiVersion,
+          deployment: config.deployment,
+        });
+        console.log('Azure OpenAI client initialized (legacy mode)');
+      }
     }
     return this.client;
   }
 
   /**
    * 创建新的客户端实例（非单例，用于特殊场景）
-   * @returns {AzureOpenAI}
+   * @returns {OpenAI|AzureOpenAI}
    */
   createNewClient() {
     const config = this.validateConfig();
-    return new AzureOpenAI({
-      apiKey: config.apiKey,
-      endpoint: config.endpoint,
-      apiVersion: config.apiVersion,
-      deployment: config.deployment,
-    });
+
+    if (this.isNewApiMode()) {
+      const baseUrl = this.buildBaseUrl(config.endpoint);
+      return new OpenAI({
+        apiKey: config.apiKey,
+        baseURL: baseUrl,
+      });
+    } else {
+      return new AzureOpenAI({
+        apiKey: config.apiKey,
+        endpoint: config.endpoint,
+        apiVersion: config.apiVersion,
+        deployment: config.deployment,
+      });
+    }
   }
 
   /**
