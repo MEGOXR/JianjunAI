@@ -832,6 +832,9 @@ ${hasActualResults ? `
     console.log(`Token数: ${tokenCount}`);
     console.log(`${'='.repeat(60)}\n`);
 
+    // 记录用户活动（用于空闲检测兜底）
+    memoryService.recordUserActivity(userId, history);
+
   } catch (error) {
     timer.mark('错误发生', { error: error.message });
     console.error('处理消息时出错:', error);
@@ -901,9 +904,13 @@ exports.handleDisconnect = async (ws) => {
   const userId = ws.userId;
   if (!userId) return;
 
-  // 通知 memoryService 用户已断开（会刷新 Memobase 缓冲）
+  // 获取会话消息（用于生成会话摘要）
+  const history = chatHistories.get(userId);
+  const messages = history?.messages || null;
+
+  // 通知 memoryService 用户已断开（会刷新 Memobase 缓冲 + 生成会话摘要）
   try {
-    await memoryService.onUserDisconnect(userId);
+    await memoryService.onUserDisconnect(userId, messages);
   } catch (err) {
     console.warn('用户断开连接清理失败', err.message);
   }

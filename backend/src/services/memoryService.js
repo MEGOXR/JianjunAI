@@ -9,6 +9,8 @@
 const supabaseService = require('./supabaseService');
 const memobaseService = require('./memobaseService');
 const promptService = require('./promptService');
+const sessionSummaryService = require('./sessionSummaryService');
+const idleSessionService = require('./idleSessionService');
 
 class MemoryService {
   constructor() {
@@ -51,8 +53,23 @@ class MemoryService {
       }
     }
 
+    // 启动空闲会话检测服务
+    idleSessionService.start();
+
     console.log('[MemoryService] 初始化完成');
     return true;
+  }
+
+  /**
+   * 记录用户活动（每次处理消息时调用）
+   * @param {string} wechatOpenId - 微信OpenID
+   * @param {Array} messages - 当前会话消息
+   */
+  recordUserActivity(wechatOpenId, messages) {
+    const cached = this.userCache.get(wechatOpenId);
+    if (cached?.session?.id) {
+      idleSessionService.recordActivity(wechatOpenId, cached.session.id, messages);
+    }
   }
 
   /**
@@ -103,11 +120,15 @@ class MemoryService {
   /**
    * 用户断开连接时调用
    * @param {string} wechatOpenId - 微信OpenID
+   * @param {Array} messages - 会话消息（可选，用于生成摘要）
    */
-  async onUserDisconnect(wechatOpenId) {
+  async onUserDisconnect(wechatOpenId, messages = null) {
     console.log(`[MemoryService] 用户 ${wechatOpenId} 断开连接`);
 
     const cached = this.userCache.get(wechatOpenId);
+
+    // 标记会话已处理（防止空闲检测重复处理）
+    idleSessionService.markSessionHandled(wechatOpenId);
 
     // 结束 Supabase 会话
     if (cached?.session?.id && this.useSupabase && supabaseService.isAvailable()) {
@@ -115,6 +136,11 @@ class MemoryService {
         await supabaseService.endSession(cached.session.id);
       } catch (error) {
         console.error('[MemoryService] 结束会话失败:', error);
+      }
+
+      // 异步生成会话摘要（如果提供了消息）
+      if (messages && messages.length > 2) {
+        sessionSummaryService.generateSessionSummaryAsync(cached.session.id, messages);
       }
     }
 
@@ -457,6 +483,9 @@ class MemoryService {
   async shutdown() {
     console.log('[MemoryService] 正在关闭...');
 
+    // 停止空闲检测服务
+    idleSessionService.stop();
+
     // 关闭 Memobase（会刷新所有缓冲）
     if (this.useMemobase) {
       await memobaseService.shutdown();
@@ -483,7 +512,8 @@ class MemoryService {
       },
       cache: {
         size: this.userCache.size
-      }
+      },
+      idleSession: idleSessionService.getStatus()
     };
   }
 }

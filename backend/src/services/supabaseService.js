@@ -627,6 +627,196 @@ class SupabaseService {
     return data;
   }
 
+  // ==================== 会话总结操作 ====================
+
+  /**
+   * 更新会话摘要
+   * @param {string} sessionId - 会话ID
+   * @param {string} summary - 摘要内容
+   */
+  async updateSessionSummary(sessionId, summary) {
+    if (!this.isAvailable()) return;
+
+    const { error } = await this.client
+      .from('chat_sessions')
+      .update({
+        summary: summary,
+        summary_generated_at: new Date().toISOString()
+      })
+      .eq('id', sessionId);
+
+    if (error) {
+      console.error('[Supabase] 更新会话摘要失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取指定日期的会话摘要列表
+   * @param {string} userUuid - 用户UUID
+   * @param {string} date - 日期 (YYYY-MM-DD)
+   * @returns {Array} 会话摘要列表
+   */
+  async getSessionSummariesByDate(userUuid, date) {
+    if (!this.isAvailable()) return [];
+
+    // 计算当天的开始和结束时间 (按 Asia/Shanghai 时区)
+    const startOfDay = `${date}T00:00:00+08:00`;
+    const endOfDay = `${date}T23:59:59+08:00`;
+
+    const { data, error } = await this.client
+      .from('chat_sessions')
+      .select('id, summary, message_count, started_at')
+      .eq('user_id', userUuid)
+      .gte('started_at', startOfDay)
+      .lte('started_at', endOfDay)
+      .not('summary', 'is', null)
+      .order('started_at', { ascending: true });
+
+    if (error) {
+      console.error('[Supabase] 获取会话摘要失败:', error);
+      return [];
+    }
+
+    return data || [];
+  }
+
+  /**
+   * 保存每日总结 (使用 UPSERT 避免并发冲突)
+   * @param {string} userUuid - 用户UUID
+   * @param {string} date - 日期 (YYYY-MM-DD)
+   * @param {object} summaryData - 总结数据 { summary, key_topics, session_count, message_count }
+   */
+  async saveDailySummary(userUuid, date, summaryData) {
+    if (!this.isAvailable()) return null;
+
+    const { data, error } = await this.client
+      .from('daily_summaries')
+      .upsert({
+        user_id: userUuid,
+        date: date,
+        summary: summaryData.summary,
+        key_topics: summaryData.key_topics || [],
+        session_count: summaryData.session_count || 0,
+        message_count: summaryData.message_count || 0,
+        timezone: 'Asia/Shanghai',
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'user_id,date',  // UPSERT 关键：指定冲突列
+        ignoreDuplicates: false       // 冲突时更新而非忽略
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[Supabase] 保存每日总结失败:', error);
+      throw error;
+    }
+
+    console.log(`[Supabase] 每日总结已保存: ${userUuid} @ ${date}`);
+    return data;
+  }
+
+  /**
+   * 获取每日总结
+   * @param {string} userUuid - 用户UUID
+   * @param {string} date - 日期 (YYYY-MM-DD)
+   * @returns {object|null} 每日总结
+   */
+  async getDailySummary(userUuid, date) {
+    if (!this.isAvailable()) return null;
+
+    const { data, error } = await this.client
+      .from('daily_summaries')
+      .select('*')
+      .eq('user_id', userUuid)
+      .eq('date', date)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        // 记录不存在
+        return null;
+      }
+      console.error('[Supabase] 获取每日总结失败:', error);
+      return null;
+    }
+
+    return data;
+  }
+
+  /**
+   * 获取指定日期有会话的用户列表
+   * @param {string} date - 日期 (YYYY-MM-DD)
+   * @returns {Array} 用户列表
+   */
+  async getUsersWithSessionsOnDate(date) {
+    if (!this.isAvailable()) return [];
+
+    const startOfDay = `${date}T00:00:00+08:00`;
+    const endOfDay = `${date}T23:59:59+08:00`;
+
+    const { data, error } = await this.client
+      .from('chat_sessions')
+      .select('user_id')
+      .gte('started_at', startOfDay)
+      .lte('started_at', endOfDay);
+
+    if (error) {
+      console.error('[Supabase] 获取用户列表失败:', error);
+      return [];
+    }
+
+    // 去重
+    const uniqueUserIds = [...new Set(data.map(s => s.user_id))];
+    return uniqueUserIds.map(id => ({ id }));
+  }
+
+  /**
+   * 获取用户最后活动时间
+   * @param {string} userUuid - 用户UUID
+   * @returns {Date|null} 最后活动时间
+   */
+  async getUserLastActiveTime(userUuid) {
+    if (!this.isAvailable()) return null;
+
+    const { data, error } = await this.client
+      .from('chat_messages')
+      .select('created_at')
+      .eq('user_id', userUuid)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      console.error('[Supabase] 获取最后活动时间失败:', error);
+      return null;
+    }
+
+    return data ? new Date(data.created_at) : null;
+  }
+
+  /**
+   * 获取活跃会话列表（用于空闲检测）
+   * @returns {Array} 活跃会话列表
+   */
+  async getActiveSessionsForIdleCheck() {
+    if (!this.isAvailable()) return [];
+
+    const { data, error } = await this.client
+      .from('chat_sessions')
+      .select('id, user_id, started_at, message_count')
+      .eq('is_active', true);
+
+    if (error) {
+      console.error('[Supabase] 获取活跃会话失败:', error);
+      return [];
+    }
+
+    return data || [];
+  }
+
   // ==================== 辅助方法 ====================
 
   /**
