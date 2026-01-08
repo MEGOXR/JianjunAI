@@ -1,4 +1,4 @@
-const { AzureOpenAI } = require("openai");
+const AzureClientFactory = require('../../utils/AzureClientFactory');
 const LLMProvider = require('../base/LLMProvider');
 
 /**
@@ -15,18 +15,15 @@ class AzureLLMProvider extends LLMProvider {
    * 初始化Azure OpenAI客户端
    */
   async initialize() {
-    if (!this.validateConfigSync()) {
-      throw new Error('Azure LLM configuration is invalid');
+    try {
+      // 委托给 AzureClientFactory 创建客户端
+      // 它会自动处理新旧 API 模式 (GPT-4 vs GPT-5.2+)
+      this.client = AzureClientFactory.getClient();
+      console.log('Azure LLM Provider initialized via Factory');
+    } catch (error) {
+      console.error('Failed to initialize Azure LLM Provider:', error);
+      throw error;
     }
-
-    this.client = new AzureOpenAI({
-      apiKey: this.config.apiKey,
-      endpoint: this.config.endpoint,
-      apiVersion: this.config.apiVersion,
-      deployment: this.config.deployment
-    });
-
-    console.log('Azure LLM Provider initialized');
   }
 
   /**
@@ -104,13 +101,11 @@ class AzureLLMProvider extends LLMProvider {
   /**
    * 同步配置验证
    */
+  /**
+   * 同步配置验证
+   */
   validateConfigSync() {
-    return !!(
-      this.config.apiKey &&
-      this.config.endpoint &&
-      this.config.apiVersion &&
-      this.config.deployment
-    );
+    return AzureClientFactory.isConfigValid();
   }
 
   /**
