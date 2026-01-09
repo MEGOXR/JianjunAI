@@ -323,10 +323,7 @@ wss.on('connection', async (ws, req) => {
   // 注册心跳监控
   heartbeatService.register(ws);
 
-  // 初始化连接并发送问候
-  await chatController.handleConnection(ws);
-
-  // 监听消息
+  // 监听消息 (提前监听，防止初始化过程中的消息丢失)
   ws.on('message', async (message) => {
     // 最基础的调试：确认消息事件被触发
     console.log('🔍 收到原始WebSocket消息，长度:', message.length, '字节');
@@ -452,10 +449,14 @@ wss.on('connection', async (ws, req) => {
       }
     } catch (error) {
       console.error('WebSocket 错误:', error);
-      ws.send(JSON.stringify({
-        error: '服务器内部错误',
-        details: error.message || '未知错误'
-      }));
+
+      // 不发送错误给客户端，除非确认是服务器错误，避免ping/pong干扰
+      if (!(error instanceof SyntaxError)) {
+        ws.send(JSON.stringify({
+          error: '服务器内部错误',
+          details: error.message || '未知错误'
+        }));
+      }
     }
   });
 
@@ -471,6 +472,13 @@ wss.on('connection', async (ws, req) => {
     console.error('WebSocket error:', error);
     heartbeatService.unregister(ws);
   });
+
+  // 初始化连接并发送问候 (异步，放在监听器后面)
+  try {
+    await chatController.handleConnection(ws);
+  } catch (e) {
+    console.error("Connection handler failed", e);
+  }
 });
 
 // 优雅关闭处理

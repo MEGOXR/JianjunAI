@@ -594,7 +594,7 @@ exports.sendMessage = async (ws, prompt, images = []) => {
 
                 // 构建后续 Prompt
                 const alreadySpoken = assistantResponse.trim();
-                const safeSearchQuery = typeof queryOrParams === 'object' ? JSON.stringify(queryOrParams) : queryOrParams;
+                // const safeSearchQuery = typeof queryOrParams === 'object' ? JSON.stringify(queryOrParams) : queryOrParams;
 
                 // 🔍 打印第一轮LLM生成的内容，用于调试
                 console.log(`[${requestId}] 📝 第一轮LLM已生成内容: "${alreadySpoken}"`);
@@ -616,9 +616,9 @@ exports.sendMessage = async (ws, prompt, images = []) => {
                 // 这样可以避免"我来确认一下"这类话影响第二轮的判断
                 const hasSearchResults = searchResults && searchResults.length > 0;
                 const isTransitionalPhrase = alreadySpoken.includes('查') ||
-                                             alreadySpoken.includes('确认') ||
-                                             alreadySpoken.includes('稍等') ||
-                                             alreadySpoken.includes('片刻');
+                  alreadySpoken.includes('确认') ||
+                  alreadySpoken.includes('稍等') ||
+                  alreadySpoken.includes('片刻');
 
                 if (hasSearchResults && isTransitionalPhrase) {
                   shouldClear = true;
