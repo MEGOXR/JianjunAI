@@ -39,7 +39,7 @@ class SuggestionService {
       console.log('生成建议问题的提示词:', prompt.substring(0, 200) + '...');
 
       const response = await this.provider.createCompletion(prompt, {
-        max_tokens: 300
+        max_completion_tokens: 300
       });
 
       const content = response.trim();

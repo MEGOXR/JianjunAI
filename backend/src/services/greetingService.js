@@ -202,7 +202,7 @@ ${recentMessages}
       const response = await this.getOpenAIClient().chat.completions.create({
         model: AzureClientFactory.getDeploymentName(),
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 50,
+        max_completion_tokens: 50,
         temperature: 0.3
       });
 

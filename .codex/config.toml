@@ -1,0 +1,15 @@
+# Set the default model and provider
+model = "gpt-5.2"
+model_provider = "azure"
+preferred_auth_method = "apikey"
+
+# Configure the Azure provider
+[model_providers.azure]
+name = "Azure OpenAI"
+# Make sure you set the appropriate subdomain for this URL.
+base_url = "https://aiplasticsurgury.openai.azure.com/openai"
+env_key = "AZURE_OPENAI_API_KEY"
+wire_api = "responses"
+model_reasoning_effort = "high"
+
+# Example of configuring an MCP server for Playwright

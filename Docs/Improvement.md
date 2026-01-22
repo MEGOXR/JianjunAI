@@ -222,7 +222,7 @@ class AzureLLMProvider extends LLMProvider {
       model: this.config.deployment,
       messages: messages,
       stream: true,
-      max_tokens: options.maxTokens || 2000,
+      max_completion_tokens: options.maxTokens || 2000,
       temperature: options.temperature || 0.5,
       ...options
     });
@@ -237,7 +237,7 @@ class AzureLLMProvider extends LLMProvider {
       await this.client.chat.completions.create({
         model: this.config.deployment,
         messages: [{role: "user", content: "test"}],
-        max_tokens: 1
+                max_completion_tokens: 1
       });
       return { status: 'healthy' };
     } catch (error) {

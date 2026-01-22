@@ -435,7 +435,7 @@ async function generateSessionSummary(sessionId, messages) {
             messages: [
                 { role: 'user', content: SESSION_SUMMARY_PROMPT.replace('{conversation}', conversation) }
             ],
-            max_tokens: 300,
+            max_completion_tokens: 300,
             temperature: 0.3
         });
 
@@ -515,7 +515,7 @@ async function generateDailySummary(userId, date) {
             messages: [
                 { role: 'user', content: DAILY_SUMMARY_PROMPT.replace('{summaries}', summariesText) }
             ],
-            max_tokens: 500,
+            max_completion_tokens: 500,
             temperature: 0.3,
             response_format: { type: 'json_object' }
         });
@@ -1336,7 +1336,7 @@ ${transitionPhrase ? `用"${transitionPhrase.trim()}"作为过渡词开头。` :
         { role: "user", content: userMessage }
       ],
       stream: true,
-      max_tokens: 500
+      max_completion_tokens: 500
     });
 
     for await (const chunk of stream) {

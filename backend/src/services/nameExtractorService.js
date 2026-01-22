@@ -38,7 +38,7 @@ class NameExtractorService {
           { role: "user", content: `请从以下对话中提取用户的名字：\n\n${conversationContext}` }
         ],
         temperature: 0.1,
-        max_tokens: 50,
+        max_completion_tokens: 50,
         response_format: { type: "json_object" }
       });
 
